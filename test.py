@@ -267,15 +267,15 @@ TEMPLATE = '''
             gap: 1rem;
         }
         .setting-group {
-            /* margin-bottom: 1.5rem; */ /* Gap handled by grid-container */
+            margin-bottom: 1rem; /* Reduced margin-bottom */
         }
 
         .setting-label {
             display: block;
             color: #cbd5e1;
-            font-size: 0.875rem;
+            font-size: 0.8rem; /* Slightly reduced font size */
             font-weight: 500;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.4rem; /* Adjusted margin */
         }
 
         .select-container {
@@ -349,31 +349,31 @@ TEMPLATE = '''
 
         /* Controls Section */
         .controls-section {
-            margin-top: 1.5rem;
+            margin-top: 1.5rem; /* This margin is between this section and the one above it (Preview) */
         }
 
         .controls-grid {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 1rem;
-            justify-content: center;
+            display: grid;
+            gap: 1rem; /* Default gap for larger screens */
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); /* 2-4 buttons */
         }
 
         .control-btn {
             background: #3b82f6;
             color: white;
             border: none;
-            padding: 0.625rem 1.25rem;
+            padding: 0.625rem 1.25rem; /* Keep padding for button size */
             border-radius: 0.375rem;
             font-weight: 600;
-            font-size: 1rem;
+            font-size: 0.9rem; /* Slightly reduce font size for compactness */
             cursor: pointer;
             transition: background-color 0.2s;
             box-shadow: 0 2px 4px rgba(30,41,59,0.08);
-            flex: 1 1 200px;
-            min-width: 180px;
-            max-width: 100%;
-            margin: 0;
+            width: 100%; /* Make button take full width of grid cell */
+            /* flex: 1 1 200px; */ /* Remove flex properties */
+            /* min-width: 180px; */ /* Remove min-width */
+            /* max-width: 100%; */ /* Already handled by width: 100% in grid */
+            margin: 0; /* Keep margin 0 */
         }
         .control-btn:hover:not(:disabled) {
             background: #2563eb;
@@ -429,7 +429,11 @@ TEMPLATE = '''
                 /* grid-template-columns: 1fr; */ /* Already 1fr by default now */
             }
             .settings-grid-container {
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); /* Slightly smaller min for medium screens */
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            }
+            .controls-grid {
+                grid-template-columns: repeat(2, 1fr); /* 2 buttons per row on medium screens */
+                gap: 1rem;
             }
             /* The single column rule for settings-grid-container is correctly in max-width: 640px */
         }
@@ -438,7 +442,16 @@ TEMPLATE = '''
             .container {
                 padding: 0.5rem;
             }
-
+             .card-content { /* Reduce padding further on very small screens */
+                padding: 0.75rem;
+            }
+            .settings-grid-container { /* Already 2-col from subtask, ensure gap is also smaller */
+                gap: 0.75rem;
+            }
+            .controls-grid {
+                grid-template-columns: repeat(2, 1fr); /* 2 buttons per row */
+                gap: 0.75rem; /* reduce gap for controls on small screens */
+            }
             .header-content {
                 flex-direction: column;
                 gap: 1rem;
@@ -535,7 +548,7 @@ TEMPLATE = '''
                 <div class="card-header">
                     <h3 class="card-title">Camera Settings</h3>
                 </div>
-                <div class="card-content">
+                <div class="card-content" style="padding: 1rem;"> {/* Reduced padding for settings card content */}
                     <form id="settings-form">
                         <div class="settings-grid-container"> {/* Grid container for settings */}
                             <div class="setting-group">
@@ -624,6 +637,31 @@ TEMPLATE = '''
                 </div>
             </div>
 
+            <!-- Camera Controls Card - MOVED HERE -->
+            <section class="controls-section">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Camera Controls</h3>
+                    </div>
+                    <div class="card-content">
+                        <div class="controls-grid">
+                            <form method="POST" action="/start_monitor" style="display:contents;"> {/* Use display:contents for form if it's a grid item parent */}
+                                <button type="submit" class="control-btn" {% if not g_connected or monitoring %}disabled{% endif %}>Start Stream</button>
+                            </form>
+                            <form method="POST" action="/stop_monitor" style="display:contents;">
+                                <button type="submit" class="control-btn" {% if not g_connected or not monitoring %}disabled{% endif %}>Stop Stream</button>
+                            </form>
+                            <form method="POST" action="/capture" style="display:contents;">
+                                <button type="submit" class="control-btn" {% if not g_connected %}disabled{% endif %}>Capture Image</button>
+                            </form>
+                            <form method="POST" action="/disconnect" style="display:contents;">
+                                <button type="submit" class="control-btn" {% if not g_connected %}disabled{% endif %}>Disconnect</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <section class="live-preview-section">
                 <div class="card">
                     <div class="card-header">
@@ -662,29 +700,7 @@ TEMPLATE = '''
                     </div>
                 </div>
                 {% endif %}
-                <section class="controls-section">
-                    <div class="card">
-                        <div class="card-header">
-                            <h3 class="card-title">Camera Controls</h3>
-                        </div>
-                        <div class="card-content">
-                            <div class="controls-grid">
-                                <form method="POST" action="/start_monitor" style="display:inline;">
-                                    <button type="submit" class="control-btn" {% if not g_connected or monitoring %}disabled{% endif %}>Start Stream</button>
-                                </form>
-                                <form method="POST" action="/stop_monitor" style="display:inline;">
-                                    <button type="submit" class="control-btn" {% if not g_connected or not monitoring %}disabled{% endif %}>Stop Stream</button>
-                                </form>
-                                <form method="POST" action="/capture" style="display:inline;">
-                                    <button type="submit" class="control-btn" {% if not g_connected %}disabled{% endif %}>Capture Image</button>
-                                </form>
-                                <form method="POST" action="/disconnect" style="display:inline;">
-                                    <button type="submit" class="control-btn" {% if not g_connected %}disabled{% endif %}>Disconnect</button>
-                                </form>
-                            </div>
-                        </div>
-                    </div>
-                </section>
+                <!-- Original Camera Controls Section - REMOVED from here -->
             </section>
             <aside class="sidebar">
                 <!-- System Status Card - REMAINS IN SIDEBAR -->
@@ -1216,7 +1232,7 @@ def start_monitor():
         # Other settings like compression, image mode, rotation, effect, sharpness
         # will be taken from the user's saved_settings via stream_settings.copy()
         # and applied by apply_camera_settings.
-        
+
         # Apply the potentially modified settings for the preview stream
         apply_camera_settings(cam, stream_settings)
         g_monitoring = True
