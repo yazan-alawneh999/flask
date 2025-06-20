@@ -25,15 +25,15 @@ last_image_size = None
 last_image_width = None
 last_image_height = None
 
-# Set high performance as default
+# Default settings prioritizing performance and quick startup
 DEFAULT_SETTINGS = {
-    'resolution': [3200, 2400],  # Highest supported
-    'compression': 'Very High',  # Highest quality
-    'fps': '90',                # High FPS (adjust if your camera supports higher)
+    'resolution': [1920, 1080],  # Moderate HD resolution
+    'compression': 'Medium',      # Balanced quality and size/speed
+    'fps': '30',                 # Standard video FPS
     'image': 'Color',
     'rotation': '0',
     'effect': 'Normal',
-    'sharpness': 'High'
+    'sharpness': 'Normal'        # Changed from 'High' to 'Normal'
 }
 
 TEMP_DIR = os.path.join(tempfile.gettempdir(), 'smartcam_images')
@@ -114,9 +114,14 @@ TEMPLATE = '''
         /* Main Content Layout */
         .main-content {
             display: grid;
-            grid-template-columns: 2fr 1fr;
+            /* grid-template-columns: 2fr 1fr; */ /* Changed to single column for main items */
+            grid-template-columns: 1fr;
             gap: 1.5rem;
             margin-bottom: 1.5rem;
+        }
+
+        .settings-card { /* Specific class for the settings card if needed for width */
+            grid-column: 1 / -1; /* Span full width if main-content was multi-column */
         }
 
         /* Card Styles */
@@ -145,7 +150,7 @@ TEMPLATE = '''
 
         /* Live Preview Section */
         .live-preview-section {
-            grid-column: 1;
+            /* grid-column: 1; */ /* No longer needed if main-content is single column */
         }
 
         .video-container {
@@ -256,8 +261,13 @@ TEMPLATE = '''
         }
 
         /* Camera Settings Styles */
+        .settings-grid-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); /* Adjusted minmax */
+            gap: 1rem;
+        }
         .setting-group {
-            margin-bottom: 1.5rem;
+            /* margin-bottom: 1.5rem; */ /* Gap handled by grid-container */
         }
 
         .setting-label {
@@ -416,8 +426,12 @@ TEMPLATE = '''
         /* Responsive Design */
         @media (max-width: 1024px) {
             .main-content {
-                grid-template-columns: 1fr;
+                /* grid-template-columns: 1fr; */ /* Already 1fr by default now */
             }
+            .settings-grid-container {
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); /* Slightly smaller min for medium screens */
+            }
+            /* The single column rule for settings-grid-container is correctly in max-width: 640px */
         }
 
         @media (max-width: 640px) {
@@ -512,118 +526,14 @@ TEMPLATE = '''
         </header>
         <!-- Main Content -->
         <main class="main-content">
-            <section class="live-preview-section">
-                <div class="card">
-                    <div class="card-header">
-                        <h3 class="card-title">Live Preview</h3>
-                    </div>
-                    <div class="card-content">
-                        <div class="video-container">
-                            {% if not g_connected %}
-                            <div class="camera-disconnected">
-                                <p class="disconnected-title">Camera Disconnected</p>
-                                <p class="disconnected-subtitle">Connect your camera to start streaming</p>
-                            </div>
-                            {% elif monitoring %}
-                            <img id="video-stream" src="/video_stream" style="max-width:100%; height:auto;" />
-                            {% else %}
-                            <div class="camera-disconnected">
-                                <p class="disconnected-title">Monitor Mode Off</p>
-                                <p class="disconnected-subtitle">Start monitor mode to view live stream</p>
-                            </div>
-                            {% endif %}
-                        </div>
-                    </div>
+            <!-- Camera Settings Card - MOVED HERE -->
+            <div class="card settings-card"> <!-- Added settings-card class for potential specific styling -->
+                <div class="card-header">
+                    <h3 class="card-title">Camera Settings</h3>
                 </div>
-                {% if last_image %}
-                <div class="captured-image-container">
-                    <img id="captured-image" src="/get_image/{{ last_image }}" />
-                    <div class="status-footer">
-                        <div class="footer-item">
-                            <div class="footer-label">Size</div>
-                            <div class="footer-value">{{ last_image_size }} KB</div>
-                        </div>
-                        <div class="footer-item">
-                            <div class="footer-label">Dimensions</div>
-                            <div class="footer-value">{{ last_image_width }}×{{ last_image_height }}</div>
-                        </div>
-                    </div>
-                </div>
-                {% endif %}
-                <section class="controls-section">
-                    <div class="card">
-                        <div class="card-header">
-                            <h3 class="card-title">Camera Controls</h3>
-                        </div>
-                        <div class="card-content">
-                            <div class="controls-grid">
-                                <form method="POST" action="/start_monitor" style="display:inline;">
-                                    <button type="submit" class="control-btn" {% if not g_connected or monitoring %}disabled{% endif %}>Start Stream</button>
-                                </form>
-                                <form method="POST" action="/stop_monitor" style="display:inline;">
-                                    <button type="submit" class="control-btn" {% if not g_connected or not monitoring %}disabled{% endif %}>Stop Stream</button>
-                                </form>
-                                <form method="POST" action="/capture" style="display:inline;">
-                                    <button type="submit" class="control-btn" {% if not g_connected %}disabled{% endif %}>Capture Image</button>
-                                </form>
-                                <form method="POST" action="/disconnect" style="display:inline;">
-                                    <button type="submit" class="control-btn" {% if not g_connected %}disabled{% endif %}>Disconnect</button>
-                                </form>
-                            </div>
-                        </div>
-                    </div>
-                </section>
-            </section>
-            <aside class="sidebar">
-                <!-- System Status Card -->
-                <div class="card">
-                    <div class="card-header">
-                        <h3 class="card-title">System Status</h3>
-                    </div>
-                    <div class="card-content">
-                        <div class="status-item">
-                            <div class="status-label">
-                                <span class="status-text cpu">CPU Usage</span>
-                            </div>
-                            <span class="status-value">{{ status.cpu }}%</span>
-                        </div>
-                        <div class="status-item">
-                            <div class="status-label">
-                                <span class="status-text memory">Memory</span>
-                            </div>
-                            <span class="status-value">{{ status.mem }}%</span>
-                        </div>
-                        <div class="status-item">
-                            <div class="status-label">
-                                <span class="status-text temperature">Temperature</span>
-                            </div>
-                            <span class="status-value">{% if status.temperature %}{{ status.temperature }}°C{% else %}N/A{% endif %}</span>
-                        </div>
-                        <div class="status-item">
-                            <div class="status-label">
-                                <span class="status-text network">Network</span>
-                            </div>
-                            <span class="status-value">{{ status.transmitted }}</span>
-                        </div>
-                        <div class="status-footer">
-                            <div class="footer-item">
-                                <div class="footer-label">Last Access</div>
-                                <div class="footer-value">{{ status.last_access }}</div>
-                            </div>
-                            <div class="footer-item">
-                                <div class="footer-label">Latency</div>
-                                <div class="footer-value">{{ status.latency }} ms</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <!-- Camera Settings Card -->
-                <div class="card">
-                    <div class="card-header">
-                        <h3 class="card-title">Camera Settings</h3>
-                    </div>
-                    <div class="card-content">
-                        <form method="POST" action="/capture">
+                <div class="card-content">
+                    <form id="settings-form">
+                        <div class="settings-grid-container"> {/* Grid container for settings */}
                             <div class="setting-group">
                                 <label class="setting-label">Resolution</label>
                                 <div class="select-container">
@@ -705,9 +615,117 @@ TEMPLATE = '''
                                     </select>
                                 </div>
                             </div>
-                        </form>
+                        </div> {/* End of .settings-grid-container */}
+                    </form>
+                </div>
+            </div>
+
+            <section class="live-preview-section">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Live Preview</h3>
+                    </div>
+                    <div class="card-content">
+                        <div class="video-container">
+                            {% if not g_connected %}
+                            <div class="camera-disconnected">
+                                <p class="disconnected-title">Camera Disconnected</p>
+                                <p class="disconnected-subtitle">Connect your camera to start streaming</p>
+                            </div>
+                            {% elif monitoring %}
+                            <img id="video-stream" src="/video_stream" style="max-width:100%; height:auto;" />
+                            {% else %}
+                            <div class="camera-disconnected">
+                                <p class="disconnected-title">Monitor Mode Off</p>
+                                <p class="disconnected-subtitle">Start monitor mode to view live stream</p>
+                            </div>
+                            {% endif %}
+                        </div>
                     </div>
                 </div>
+                {% if last_image %}
+                <div class="captured-image-container">
+                    <img id="captured-image" src="/get_image/{{ last_image }}" />
+                    <div class="status-footer">
+                        <div class="footer-item">
+                            <div class="footer-label">Size</div>
+                            <div class="footer-value">{{ last_image_size }} KB</div>
+                        </div>
+                        <div class="footer-item">
+                            <div class="footer-label">Dimensions</div>
+                            <div class="footer-value">{{ last_image_width }}×{{ last_image_height }}</div>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+                <section class="controls-section">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">Camera Controls</h3>
+                        </div>
+                        <div class="card-content">
+                            <div class="controls-grid">
+                                <form method="POST" action="/start_monitor" style="display:inline;">
+                                    <button type="submit" class="control-btn" {% if not g_connected or monitoring %}disabled{% endif %}>Start Stream</button>
+                                </form>
+                                <form method="POST" action="/stop_monitor" style="display:inline;">
+                                    <button type="submit" class="control-btn" {% if not g_connected or not monitoring %}disabled{% endif %}>Stop Stream</button>
+                                </form>
+                                <form method="POST" action="/capture" style="display:inline;">
+                                    <button type="submit" class="control-btn" {% if not g_connected %}disabled{% endif %}>Capture Image</button>
+                                </form>
+                                <form method="POST" action="/disconnect" style="display:inline;">
+                                    <button type="submit" class="control-btn" {% if not g_connected %}disabled{% endif %}>Disconnect</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </section>
+            <aside class="sidebar">
+                <!-- System Status Card - REMAINS IN SIDEBAR -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">System Status</h3>
+                    </div>
+                    <div class="card-content">
+                        <div class="status-item">
+                            <div class="status-label">
+                                <span class="status-text cpu">CPU Usage</span>
+                            </div>
+                            <span class="status-value">{{ status.cpu }}%</span>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-label">
+                                <span class="status-text memory">Memory</span>
+                            </div>
+                            <span class="status-value">{{ status.mem }}%</span>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-label">
+                                <span class="status-text temperature">Temperature</span>
+                            </div>
+                            <span class="status-value">{% if status.temperature %}{{ status.temperature }}°C{% else %}N/A{% endif %}</span>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-label">
+                                <span class="status-text network">Network</span>
+                            </div>
+                            <span class="status-value">{{ status.transmitted }}</span>
+                        </div>
+                        <div class="status-footer">
+                            <div class="footer-item">
+                                <div class="footer-label">Last Access</div>
+                                <div class="footer-value">{{ status.last_access }}</div>
+                            </div>
+                            <div class="footer-item">
+                                <div class="footer-label">Latency</div>
+                                <div class="footer-value">{{ status.latency }} ms</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Camera Settings Card was here, now moved to main content area -->
             </aside>
         </main>
         {% if warning %}
@@ -725,6 +743,44 @@ TEMPLATE = '''
         </div>
         {% endif %}
     </div>
+    <script>
+        const settingsForm = document.getElementById('settings-form');
+        if (settingsForm) {
+            const selectElements = settingsForm.querySelectorAll('select');
+            selectElements.forEach(select => {
+                select.addEventListener('change', function() {
+                    const formData = new FormData(settingsForm);
+                    fetch('/update_stream_settings', {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            const videoStreamImage = document.getElementById('video-stream');
+                            if (videoStreamImage) {
+                                // Reload the image by changing the src attribute
+                                const originalSrc = videoStreamImage.src.split('?')[0];
+                                videoStreamImage.src = originalSrc + '?' + new Date().getTime();
+                            }
+                            // Optionally, display a success message or update UI
+                            console.log('Settings updated successfully.');
+                        } else {
+                            // Optionally, display an error message
+                            console.error('Error updating settings:', data.error);
+                            if (data.warning) {
+                                alert('Warning: ' + data.warning);
+                            }
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error submitting settings form:', error);
+                        alert('Error submitting settings. Please try again.');
+                    });
+                });
+            });
+        }
+    </script>
 </body>
 </html>
 '''
@@ -856,12 +912,11 @@ def apply_camera_settings(cam, settings):
         elif settings['compression'] == 'Very High':
             quality = 100
 
-        return quality
+        # This quality is implicitly used by camera unless overridden in capture
+        # For consistency, capture methods should determine their own quality based on settings
 
     except Exception as e:
         print(f"Error applying camera settings: {e}")
-        # Return default quality if settings fail
-        return 85
 
 def cleanup_camera():
     """Safely cleanup camera resources"""
@@ -917,8 +972,21 @@ def video_stream():
                 try:
                     stream.seek(0)
                     stream.truncate()
+
+                    # Get current settings to determine quality for the stream
+                    current_settings = get_camera_settings()
+                    quality = 85 # Default
+                    if current_settings['compression'] == 'Low':
+                        quality = 40
+                    elif current_settings['compression'] == 'Medium':
+                        quality = 60
+                    elif current_settings['compression'] == 'High':
+                        quality = 85
+                    elif current_settings['compression'] == 'Very High':
+                        quality = 100
+
                     # Use video port for streaming
-                    cam.capture(stream, format='jpeg', use_video_port=True)
+                    cam.capture(stream, format='jpeg', use_video_port=True, quality=quality)
                     frame = stream.getvalue()
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
@@ -965,63 +1033,60 @@ def capture():
         return redirect(request.referrer or url_for('index'))
 
     try:
-        # Parse and persist settings
-        res = request.form.get('resolution', '3200x2400').split('x')
-        try:
-            width = int(res[0])
-            height = int(res[1])
-            if width <= 0 or height <= 0:
-                width, height = 3200, 2400
-        except (ValueError, IndexError):
-            width, height = 3200, 2400
-        compression = request.form.get('compression', 'Very High')
-        fps = request.form.get('fps', '90')
-        image = request.form.get('image', 'Color')
-        rotation = request.form.get('rotation', '0')
-        effect = request.form.get('effect', 'Normal')
-        sharpness = request.form.get('sharpness', 'High')
-        # Save settings to session
-        session['camera_settings'] = {
-            'resolution': [width, height],
-            'compression': compression,
-            'fps': fps,
-            'image': image,
-            'rotation': rotation,
-            'effect': effect,
-            'sharpness': sharpness
-        }
+        # Get settings from session (updated by /update_stream_settings)
+        current_settings = get_camera_settings()
+        save_camera_settings(current_settings) # Ensure these are affirmed as the settings for this capture
+
+        width = current_settings['resolution'][0]
+        height = current_settings['resolution'][1]
+        compression = current_settings['compression']
+        # fps = current_settings['fps'] # FPS is not directly used for single capture like this typically
+        image_mode = current_settings['image'] # Renamed to avoid conflict with image variable later
+        rotation = current_settings['rotation']
+        effect = current_settings['effect']
+        sharpness = current_settings['sharpness']
 
         cam = get_camera()
         if cam is None:
             raise Exception("Failed to initialize camera")
 
-        # Only set camera parameters if not streaming
+        # Apply camera settings for capture.
+        # apply_camera_settings(cam, current_settings)
+        # The above line is comprehensive. Alternatively, set parameters individually for capture:
+        # Note: apply_camera_settings also sets framerate, which might not be desired to change for a single capture
+        # if it's different from the stream/default. For capture, resolution, rotation, effect, sharpness, color_effects are key.
+
+        # If not streaming, set all parameters. If streaming, some parameters like resolution/fps
+        # are managed by the stream, but others like image effect, color, sharpness can be applied.
         if not g_monitoring:
             try:
-                cam.resolution = (width, height)
+                cam.resolution = (width, height) # Crucial for capture
                 cam.rotation = int(rotation)
                 cam.image_effect = 'negative' if effect == 'Negative' else 'none'
                 cam.sharpness = 100 if sharpness == 'High' else (50 if sharpness == 'Medium' else 0)
-                # Fix grayscale
-                if image == 'Gray':
+                if image_mode == 'Gray':
                     cam.color_effects = (128, 128)
                 else:
                     cam.color_effects = None
             except Exception as e:
-                print(f"Error setting camera parameters: {e}")
-                cleanup_camera()
-                time.sleep(1)
-                cam = get_camera()
-                if cam is None:
-                    raise Exception("Failed to recover camera after parameter error")
+                print(f"Error setting camera parameters for capture: {e}")
+                # Potentially cleanup and re-init camera, or just raise
+                raise Exception(f"Failed to set camera parameters for capture: {e}")
         else:
-            # Always set color_effects for streaming too
-            if image == 'Gray':
+            # If monitoring, we might want to apply temporary changes for this capture
+            # For now, we'll primarily rely on the image_mode (color effects) and quality.
+            # Resolution/rotation for a capture during monitoring is tricky if it differs from stream settings.
+            # For simplicity, we'll assume the capture during monitoring uses current stream resolution/rotation.
+            # The main things that can be changed for a single JPEG capture are quality and color effects.
+            if image_mode == 'Gray':
                 cam.color_effects = (128, 128)
             else:
                 cam.color_effects = None
+            # Sharpness and effect could also be set here if desired for a capture-specific alteration
+            # cam.sharpness = ...
+            # cam.image_effect = ...
 
-        quality = 85  # Default
+        quality = 85  # Default for capture quality, derived from 'compression' setting
         if compression == 'Low':
             quality = 40
         elif compression == 'Medium':
@@ -1037,17 +1102,28 @@ def capture():
             try:
                 stream.seek(0)
                 stream.truncate()
-                cam.capture(stream, format='jpeg', quality=quality, use_video_port=g_monitoring)
+                # If g_monitoring is true, use_video_port=True is used.
+                # This is generally for continuous streaming. For a single high-res capture,
+                # it might be better to use the still port if settings (like resolution)
+                # significantly differ from stream settings.
+                # However, changing resolution on the fly while streaming is complex.
+                # For now, we assume capture during monitoring uses video port and current stream settings.
+                use_still_port_for_capture = not g_monitoring
+
+                cam.capture(stream, format='jpeg', quality=quality, use_video_port=not use_still_port_for_capture)
                 break
             except Exception as e:
                 print(f"Capture attempt {attempt + 1} failed: {e}")
                 if attempt == max_retries - 1:
                     raise Exception("Failed to capture image after multiple attempts")
-                cleanup_camera()
-                time.sleep(1)
-                cam = get_camera()
-                if cam is None:
+                # Consider if full cleanup_camera() is needed or if re-init is enough
+                # cleanup_camera()
+                # time.sleep(1)
+                # cam = get_camera()
+                if cam is None: # This check might be redundant if get_camera() always returns or raises
                     raise Exception("Failed to recover camera after capture error")
+                # If cam is not None, but capture failed, it might be a transient issue or specific setting.
+                # For now, we let it retry with the same camera object if it's still there.
 
         stream.seek(0)
         image_bytes = stream.read()
@@ -1092,27 +1168,35 @@ def start_monitor():
         return redirect(request.referrer or url_for('index'))
 
     try:
-        res = request.form.get('resolution', '1920x1080').split('x')
-        width, height = int(res[0]), int(res[1])
-        # Restrict monitor mode to 1920x1080 or lower
-        if width > 1920 or height > 1080:
-            width, height = 1920, 1080
-            warning = 'Monitor mode only supports up to 1920x1080. Using 1920x1080.'
+        # Get current saved settings
+        saved_settings = get_camera_settings()
+        stream_settings = saved_settings.copy() # Work with a copy for stream-specific overrides
+
+        # Override resolution for streaming: max 1920x1080
+        # Use current resolution from saved_settings as a base, then cap it.
+        res_width, res_height = stream_settings['resolution']
+        if res_width > 1920 or res_height > 1080:
+            res_width, res_height = 1920, 1080
+            warning = 'Monitor mode resolution capped to 1920x1080 for performance.'
+        stream_settings['resolution'] = [res_width, res_height]
+
+        # Override FPS for streaming for stability, e.g., cap at 30 FPS
+        # The user's preferred FPS (from saved_settings['fps']) is kept for captures.
+        STREAM_FPS = '30' # Define a stream-specific FPS
+        if stream_settings['fps'] != STREAM_FPS: # Optionally inform user if their saved FPS is different
+            # warning = (warning + " " if warning else "") + f"Stream FPS set to {STREAM_FPS} for stability."
+            pass # Silently set it for now, could add a warning if stream_settings['fps'] was higher
+        stream_settings['fps'] = STREAM_FPS
+
+        # Other settings like compression, image mode, rotation, effect, sharpness
+        # will be taken from the user's saved_settings via stream_settings.copy()
+        # and applied by apply_camera_settings.
         
-        settings = {
-            'resolution': [width, height],
-            'compression': request.form.get('compression', 'High'),
-            'fps': request.form.get('fps', 'Auto'),
-            'image': request.form.get('image', 'Color'),
-            'rotation': request.form.get('rotation', '0'),
-            'effect': request.form.get('effect', 'Normal'),
-            'sharpness': request.form.get('sharpness', 'Medium')
-        }
-        # Apply settings for the preview stream
-        apply_camera_settings(cam, settings)
+        # Apply the potentially modified settings for the preview stream
+        apply_camera_settings(cam, stream_settings)
         g_monitoring = True
     except Exception as e:
-         warning = (warning or '') + f' Error starting monitor mode: {e}'
+         warning = (warning or '') + f' Error starting monitor mode: {str(e)}'
 
     if warning:
         session['warning'] = warning
@@ -1219,6 +1303,59 @@ def disconnect():
         warning = 'Camera is already disconnected.'
         session['warning'] = warning
     return redirect(request.referrer or url_for('index'))
+
+@app.route('/update_stream_settings', methods=['POST'])
+def update_stream_settings():
+    global g_camera, g_monitoring, g_connected
+    try:
+        current_settings = get_camera_settings()
+
+        # Update settings from form data
+        res_str = request.form.get('resolution', f"{current_settings['resolution'][0]}x{current_settings['resolution'][1]}")
+        res = res_str.split('x')
+        try:
+            width = int(res[0])
+            height = int(res[1])
+            if width <= 0 or height <= 0: # Basic validation
+                raise ValueError("Invalid resolution dimensions")
+            current_settings['resolution'] = [width, height]
+        except (ValueError, IndexError, TypeError):
+            return jsonify({'success': False, 'error': 'Invalid resolution format. Expected WxH (e.g., 1920x1080).'}), 400
+
+        current_settings['compression'] = request.form.get('compression', current_settings['compression'])
+        current_settings['fps'] = request.form.get('fps', current_settings['fps'])
+        current_settings['image'] = request.form.get('image', current_settings['image'])
+        current_settings['rotation'] = request.form.get('rotation', current_settings['rotation'])
+        current_settings['effect'] = request.form.get('effect', current_settings['effect'])
+        current_settings['sharpness'] = request.form.get('sharpness', current_settings['sharpness'])
+
+        save_camera_settings(current_settings)
+
+        warning_message = None
+        if g_connected and g_monitoring:
+            cam = get_camera() # Ensure camera is initialized
+            if cam:
+                # Special handling for resolution and FPS during active streaming if needed
+                # For now, apply_camera_settings should handle it.
+                # Example: Check if resolution is too high for streaming
+                if current_settings['resolution'][0] > 1920 or current_settings['resolution'][1] > 1080:
+                    warning_message = "High resolutions might impact streaming performance."
+
+                apply_camera_settings(cam, current_settings)
+                # No need to restart stream explicitly, gen_frames uses the updated g_camera object
+            else:
+                return jsonify({'success': False, 'error': 'Camera not available for applying settings.'}), 500
+
+        response_data = {'success': True, 'message': 'Settings updated successfully.'}
+        if warning_message:
+            response_data['warning'] = warning_message
+        return jsonify(response_data)
+
+    except ValueError as ve: # Catch specific validation errors
+        return jsonify({'success': False, 'error': str(ve)}), 400
+    except Exception as e:
+        print(f"Error updating stream settings: {e}")
+        return jsonify({'success': False, 'error': f'An unexpected error occurred: {str(e)}'}), 500
 
 @app.route('/get_image/<filename>')
 def get_image(filename):
