@@ -468,6 +468,10 @@ TEMPLATE = '''
                 grid-template-columns: 1fr;
                 gap: 1rem;
             }
+            .settings-grid-container {
+                grid-template-columns: repeat(2, 1fr); /* Display two setting options per row */
+                gap: 0.75rem; /* Optionally reduce gap slightly for smaller screens */
+            }
         }
 
         .nav-buttons {
@@ -649,7 +653,7 @@ TEMPLATE = '''
                     <div class="status-footer">
                         <div class="footer-item">
                             <div class="footer-label">Size</div>
-                            <div class="footer-value">{{ last_image_size }} KB</div>
+                            <div class="footer-value">{{ last_image_size }}</div>
                         </div>
                         <div class="footer-item">
                             <div class="footer-label">Dimensions</div>
@@ -852,10 +856,16 @@ def get_status():
 def apply_camera_settings(cam, settings):
     """Apply camera settings with proper validation and error handling"""
     try:
-        # Set resolution first (must be a tuple)
+        # Apply resolution, potentially capping it if monitoring is active
         if isinstance(settings['resolution'], list) and len(settings['resolution']) == 2:
             width, height = settings['resolution']
             if width > 0 and height > 0:
+                if g_monitoring: # If streaming, cap resolution to 1080p for video port
+                    if width > 1920 or height > 1080:
+                        original_res_for_warning = f"{width}x{height}"
+                        width, height = 1920, 1080
+                        # Consider adding a persistent warning/feedback mechanism if needed
+                        print(f"[SETTINGS WARNING] Stream resolution capped to {width}x{height} from {original_res_for_warning}")
                 cam.resolution = (int(width), int(height))
         
         # Set rotation (must be 0, 90, 180, or 270)
@@ -951,25 +961,34 @@ def cleanup_old_images():
     except Exception as e:
         print(f"Error cleaning up old images: {e}")
 
-def format_size(size_kb):
-    """Format size in KB to human readable format"""
+def format_file_size(size_bytes):
+    """Format size in bytes to human readable format (B, KB, MB, GB)"""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    size_kb = size_bytes / 1024
     if size_kb < 1024:
         return f"{size_kb:.1f} KB"
-    elif size_kb < 1024 * 1024:
-        return f"{size_kb/1024:.1f} MB"
-    else:
-        return f"{size_kb/(1024*1024):.1f} GB"
+    size_mb = size_kb / 1024
+    if size_mb < 1024:
+        return f"{size_mb:.1f} MB"
+    size_gb = size_mb / 1024
+    return f"{size_gb:.1f} GB"
 
 @app.route('/video_stream')
 def video_stream():
     def gen_frames():
+        print("[STREAM DEBUG] gen_frames started")
         try:
             cam = get_camera()
             if cam is None:
+                print("[STREAM DEBUG] Camera is None, exiting gen_frames.")
                 return
+            print(f"[STREAM DEBUG] Camera object: {cam}, resolution: {cam.resolution}, framerate: {cam.framerate}")
             stream = io.BytesIO()
+            print(f"[STREAM DEBUG] Entering while loop: g_monitoring={g_monitoring}, g_connected={g_connected}")
             while g_monitoring and g_connected:
                 try:
+                    # print("[STREAM DEBUG] Loop iteration started.")
                     stream.seek(0)
                     stream.truncate()
 
@@ -988,14 +1007,19 @@ def video_stream():
                     # Use video port for streaming
                     cam.capture(stream, format='jpeg', use_video_port=True, quality=quality)
                     frame = stream.getvalue()
+                    # print(f"[STREAM DEBUG] Frame captured, length: {len(frame)}")
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-                    time.sleep(0.1)  # Reduced delay for smoother streaming
+                    # print("[STREAM DEBUG] Frame yielded.")
+                    time.sleep(0.05)  # Increased frame rate (20 FPS target)
                 except Exception as e:
-                    print(f"Error in video stream: {e}")
+                    print(f"[STREAM DEBUG] Error in video stream loop: {e}")
                     break
+            print(f"[STREAM DEBUG] Exited while loop: g_monitoring={g_monitoring}, g_connected={g_connected}")
         except Exception as e:
-            print(f"Error in video stream generator: {e}")
+            print(f"[STREAM DEBUG] Error in video stream generator: {e}")
+        finally:
+            print("[STREAM DEBUG] gen_frames finished")
 
     return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
@@ -1137,12 +1161,13 @@ def capture():
         with open(filepath, 'wb') as f:
             f.write(image_bytes)
 
-        image_size_kb = len(image_bytes) / 1024
+        image_size_bytes = len(image_bytes)
+        formatted_size = format_file_size(image_size_bytes)
         cleanup_old_images()
 
         redirect_url = url_for('index',
             last_image=filename,
-            last_image_size=f"{image_size_kb:.1f}",
+            last_image_size=formatted_size, # Use the new formatted size
             last_image_width=width,
             last_image_height=height,
             last_capture_time=time.strftime('%Y-%m-%d %H:%M:%S')
