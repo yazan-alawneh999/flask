@@ -20,10 +20,8 @@ g_recording_lock = threading.Lock()
 g_streaming = False
 g_connected = False  # Camera is disconnected by default
 g_monitoring = False  # Monitoring mode flag
-last_image_data = None
-last_image_size = None
-last_image_width = None
-last_image_height = None
+# last_image_data, last_image_size, last_image_width, last_image_height were here, removed as unused globals.
+# Image details are passed via URL parameters.
 
 # Default settings prioritizing performance and quick startup
 DEFAULT_SETTINGS = {
@@ -723,29 +721,29 @@ TEMPLATE = '''
             </section>
 
             <section class="live-preview-section">
-                <div class="card">
+                {% if monitoring %}
+                <div class="card"> <!-- Live Preview card -->
                     <div class="card-header">
                         <h3 class="card-title">Live Preview</h3>
                     </div>
                     <div class="card-content">
                         <div class="video-container">
+                            {# If monitoring is true, g_connected should also be true as per start_monitor logic #}
+                            {# The 'not g_connected' case here is unlikely if monitoring is true, but kept for robustness #}
                             {% if not g_connected %}
                             <div class="camera-disconnected">
                                 <p class="disconnected-title">Camera Disconnected</p>
-                                <p class="disconnected-subtitle">Connect your camera to start streaming</p>
+                                <p class="disconnected-subtitle">Cannot stream if camera is not connected.</p>
                             </div>
-                            {% elif monitoring %}
-                            <img id="video-stream" src="/video_stream" style="width: 100%; height: 100%; object-fit: contain;" />
                             {% else %}
-                            <div class="camera-disconnected">
-                                <p class="disconnected-title">Monitor Mode Off</p>
-                                <p class="disconnected-subtitle">Start monitor mode to view live stream</p>
-                            </div>
+                            <img id="video-stream" src="/video_stream" style="width: 100%; height: 100%; object-fit: contain;" />
                             {% endif %}
                         </div>
                     </div>
                 </div>
-                {% if last_image %}
+                {% endif %} {# End of if monitoring for the live preview card #}
+
+                {% if last_image %} <!-- Captured image display remains, independent of monitoring state -->
                 <div class="captured-image-container">
                     <img id="captured-image" src="/get_image/{{ last_image }}" />
                     <div class="status-footer">
@@ -1047,15 +1045,27 @@ def gen_frames(cam, quality_value):
         return
 
     # The diagnostic print for quality can be updated or removed if video_stream logs it
-    print(f"[STREAM DEBUG] gen_frames using quality: {quality_value}")
     # Original status print, ensuring g_monitoring and g_connected are still relevant for the loop condition
     print(f"gen_frames(): Status: g_camera_exists={cam is not None}, g_monitoring={g_monitoring}, g_connected={g_connected}")
+
+    # Get the configured framerate for adaptive sleep
+    try:
+        target_fps = float(cam.framerate)
+        if target_fps <= 0:  # Framerate must be positive
+            print(f"[STREAM WARNING] Camera framerate is {target_fps}, falling back to 20 FPS for stream timing.")
+            target_fps = 20.0  # Fallback FPS
+    except TypeError:  # Handles case where cam.framerate might be None or not convertible
+        print(f"[STREAM WARNING] Could not determine camera framerate, falling back to 20 FPS for stream timing.")
+        target_fps = 20.0
+
+    ideal_frame_interval = 1.0 / target_fps
+    print(f"[STREAM DEBUG] gen_frames using quality: {quality_value}, Target FPS: {target_fps:.1f}, Ideal Interval: {ideal_frame_interval:.4f}s")
     
     stream = io.BytesIO()
     print(f"[STREAM DEBUG] Entering while loop: g_monitoring={g_monitoring}, g_connected={g_connected}")
     while g_monitoring and g_connected: # These globals still control the loop
         try:
-            print("gen_frames(): Inside loop, before cam.capture()")
+            # print("gen_frames(): Inside loop, before cam.capture()") # Too verbose for regular operation
             stream.seek(0)
             stream.truncate()
 
@@ -1068,14 +1078,20 @@ def gen_frames(cam, quality_value):
                    b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
 
             capture_duration = t_after_capture - t_before_capture
-            current_sleep_duration = 0.05 # This is the value we're setting
             
-            print(f"[STREAM TIMING] Capture: {capture_duration:.4f}s, Sleep: {current_sleep_duration:.2f}s, Target FPS: {1/current_sleep_duration:.1f}")
+            # Adaptive sleep to try and match the camera's configured framerate
+            sleep_duration = ideal_frame_interval - capture_duration
+            if sleep_duration < 0:
+                sleep_duration = 0.001 # Minimal sleep if we're behind, to yield control
+
+            effective_loop_time = capture_duration + sleep_duration
+            effective_fps = 1.0 / effective_loop_time if effective_loop_time > 0 else float('inf')
+            # print(f"[STREAM TIMING] Capture: {capture_duration:.4f}s, Sleep: {sleep_duration:.4f}s, Effective FPS: {effective_fps:.1f}") # Verbose
             
-            time.sleep(current_sleep_duration) # Use the variable for clarity
+            time.sleep(sleep_duration)
         except Exception as e:
             print(f"[STREAM DEBUG] Error in video stream loop: {e}")
-            print(f"gen_frames(): Exception in loop: {e}")
+            # print(f"gen_frames(): Exception in loop: {e}") # Redundant with above
             break
     print(f"[STREAM DEBUG] Exited while loop: g_monitoring={g_monitoring}, g_connected={g_connected}")
     # Removed the outer try/except from original nested gen_frames as it's now simpler
@@ -1138,25 +1154,35 @@ def capture():
     try:
         # Get settings from session (updated by /update_stream_settings)
         current_settings = get_camera_settings()
-        save_camera_settings(current_settings) # Ensure these are affirmed as the settings for this capture
+        # save_camera_settings(current_settings) # Not strictly necessary here, settings are session-based
 
-        width = current_settings['resolution'][0]
-        height = current_settings['resolution'][1]
-        compression = current_settings['compression']
-        # fps = current_settings['fps'] # FPS is not directly used for single capture like this typically
-        image_mode = current_settings['image'] # Renamed to avoid conflict with image variable later
-        # rotation = current_settings['rotation'] # Will be handled by apply_camera_settings
-        # effect = current_settings['effect'] # Will be handled by apply_camera_settings
-        # sharpness = current_settings['sharpness'] # Will be handled by apply_camera_settings
+        # Initialize capture_width, capture_height with desired values from settings
+        # These might be overridden by actual camera resolution after applying settings,
+        # especially if streaming and resolution is capped.
+        capture_width = current_settings['resolution'][0]
+        capture_height = current_settings['resolution'][1]
+        # compression = current_settings['compression'] # Used for quality setting below
+        # image_mode = current_settings['image'] # Handled by apply_camera_settings
 
         cam = get_camera()
         if cam is None:
             raise Exception("Failed to initialize camera for capture")
 
-        # === This is the key part ===
+        # Apply settings. apply_camera_settings might cap resolution if g_monitoring is True.
         print(f"[CAPTURE DEBUG] Applying settings before capture: {current_settings}")
-        apply_camera_settings(cam, current_settings) # Apply ALL current settings
+        apply_camera_settings(cam, current_settings)
         
+        # After apply_camera_settings, read the actual resolution from the camera object
+        # This reflects any capping done by apply_camera_settings if g_monitoring is True
+        if cam.resolution: # Ensure cam.resolution is not None
+            actual_capture_resolution = cam.resolution
+            capture_width = actual_capture_resolution.width
+            capture_height = actual_capture_resolution.height
+            print(f"[CAPTURE DEBUG] Actual camera resolution for capture: {capture_width}x{capture_height}")
+        else:
+            print("[CAPTURE DEBUG] Warning: cam.resolution was None after apply_camera_settings. Using dimensions from settings.")
+
+
         # Determine capture quality (compression is part of current_settings)
         quality = 85  # Default for capture quality
         if current_settings['compression'] == 'Low':
@@ -1222,8 +1248,8 @@ def capture():
         redirect_url = url_for('index',
             last_image=filename,
             last_image_size=formatted_size, # Use the new formatted size
-            last_image_width=width,
-            last_image_height=height,
+            last_image_width=capture_width, # Use actual width
+            last_image_height=capture_height, # Use actual height
             last_capture_time=time.strftime('%Y-%m-%d %H:%M:%S')
         )
         return redirect(redirect_url)
