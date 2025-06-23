@@ -442,48 +442,107 @@ TEMPLATE = '''
             .container {
                 padding: 0.5rem;
             }
-             .card-content { /* Reduce padding further on very small screens */
-                padding: 0.75rem;
+            /* General card content: default for mobile, overridden by more specific below */
+             .card-content { 
+                padding: 0.75rem; 
             }
-            .settings-grid-container { /* Already 2-col from subtask, ensure gap is also smaller */
-                gap: 0.75rem;
+            /* General card header: default for mobile, overridden by more specific below */
+            .card-header {
+                padding: 0.75rem 1rem;
             }
-            .controls-grid {
-                grid-template-columns: repeat(2, 1fr); /* 2 buttons per row */
-                gap: 0.75rem; /* reduce gap for controls on small screens */
+
+            /* Settings Card & Content */
+            .settings-card {
+                margin-bottom: 0.35rem; /* Other existing styles for .settings-card might be here too */
             }
+            .settings-card .card-header {
+                padding: 0.3rem 0.5rem;
+            }
+            .settings-card .card-title {
+                font-size: 0.9rem;
+            }
+            .settings-card .card-content {
+                padding: 0.25rem;
+            }
+            .settings-grid-container { 
+                display: grid;
+                grid-template-columns: repeat(4, 1fr); /* 4 items per row */
+                gap: 0.25rem; 
+            }
+            .setting-group { 
+                margin-bottom: 0.25rem; 
+            }
+            .setting-label {
+                font-size: 0.65rem; 
+                margin-bottom: 0.1rem; 
+                display: block; 
+                white-space: nowrap; 
+                overflow: hidden; 
+                text-overflow: ellipsis;
+                line-height: 1.2;
+            }
+            .custom-select { 
+                height: 1.8rem; 
+                font-size: 0.65rem; 
+                padding: 0 0.2rem; 
+                line-height: 1.2;
+            }
+
+            /* Controls Section */
+            .controls-section {
+                margin-bottom: 0.5rem;
+            }
+            .controls-section .card-header {
+                padding: 0.3rem 0.5rem;
+            }
+            .controls-section .card-title {
+                font-size: 0.9rem;
+            }
+            .controls-section .card-content {
+                padding: 0.25rem;
+            }
+            .controls-grid { 
+                display: flex; 
+                flex-wrap: wrap; 
+                justify-content: space-around;
+                gap: 0.25rem; 
+            }
+            .control-btn { 
+                padding: 0.3rem 0.5rem; 
+                font-size: 0.7rem; 
+                flex-grow: 0; 
+                flex-shrink: 1;
+                line-height: 1.2;
+                min-width: 0; /* From previous mobile styles */
+                width: 100%;  /* For flex items, this might make them full width. Consider adjusting if needed. */
+            }
+
+            /* Live Preview Section */
+            .live-preview-section .card-header {
+                padding: 0.3rem 0.5rem;
+            }
+            .live-preview-section .card-title {
+                font-size: 0.9rem;
+            }
+            .live-preview-section .card-content { 
+                padding: 0.25rem; 
+            }
+            .live-preview-section .video-container {
+                max-height: 150px; 
+            }
+            
+            /* Preserved essential general mobile styles */
             .header-content {
                 flex-direction: column;
                 gap: 1rem;
                 align-items: flex-start;
             }
-
             .main-title {
                 font-size: 1.5rem;
             }
-
-            .card-header,
-            .card-content {
-                padding: 1rem;
-            }
-
-            .controls-grid {
-                flex-direction: column;
-                gap: 0.75rem;
-            }
-
-            .control-btn {
-                min-width: 0;
-                width: 100%;
-            }
-
-            .status-footer {
+            .status-footer { 
                 grid-template-columns: 1fr;
                 gap: 1rem;
-            }
-            .settings-grid-container {
-                grid-template-columns: repeat(2, 1fr); /* Display two setting options per row */
-                gap: 0.75rem; /* Optionally reduce gap slightly for smaller screens */
             }
         }
 
@@ -548,9 +607,9 @@ TEMPLATE = '''
                 <div class="card-header">
                     <h3 class="card-title">Camera Settings</h3>
                 </div>
-                <div class="card-content" style="padding: 1rem;"> {/* Reduced padding for settings card content */}
+                <div class="card-content"> 
                     <form id="settings-form">
-                        <div class="settings-grid-container"> {/* Grid container for settings */}
+                        <div class="settings-grid-container">
                             <div class="setting-group">
                                 <label class="setting-label">Resolution</label>
                                 <div class="select-container">
@@ -632,7 +691,8 @@ TEMPLATE = '''
                                     </select>
                                 </div>
                             </div>
-                        </div> {/* End of .settings-grid-container */}
+                        </div>
+
                     </form>
                 </div>
             </div>
@@ -645,7 +705,7 @@ TEMPLATE = '''
                     </div>
                     <div class="card-content">
                         <div class="controls-grid">
-                            <form method="POST" action="/start_monitor" style="display:contents;"> {/* Use display:contents for form if it's a grid item parent */}
+                            <form method="POST" action="/start_monitor" style="display:contents;"> 
                                 <button type="submit" class="control-btn" {% if not g_connected or monitoring %}disabled{% endif %}>Start Stream</button>
                             </form>
                             <form method="POST" action="/stop_monitor" style="display:contents;">
@@ -675,7 +735,7 @@ TEMPLATE = '''
                                 <p class="disconnected-subtitle">Connect your camera to start streaming</p>
                             </div>
                             {% elif monitoring %}
-                            <img id="video-stream" src="/video_stream" style="max-width:100%; height:auto;" />
+                            <img id="video-stream" src="/video_stream" style="width: 100%; height: 100%; object-fit: contain;" />
                             {% else %}
                             <div class="camera-disconnected">
                                 <p class="disconnected-title">Monitor Mode Off</p>
@@ -816,28 +876,17 @@ def save_camera_settings(settings):
 def get_camera():
     global g_camera
     if g_camera is None:
+        print("get_camera(): Attempting to initialize PiCamera...")
         try:
             # Add safety delay before camera initialization
             time.sleep(0.5)
             g_camera = PiCamera()
-            # Initialize with safe default values
-            g_camera.resolution = (1920, 1080)
-            g_camera.framerate = 30
-            g_camera.rotation = 0
-            g_camera.image_effect = 'none'
-            g_camera.color_effects = None
-            g_camera.sharpness = 0
-            # Set conservative camera settings
-            g_camera.exposure_mode = 'auto'
-            g_camera.awb_mode = 'auto'
-            g_camera.meter_mode = 'average'
-            g_camera.iso = 0  # Auto ISO
-            g_camera.video_stabilization = False
-            # Apply saved settings after initialization
-            settings = get_camera_settings()
-            apply_camera_settings(g_camera, settings)
+            # Set truly minimal, non-session-dependent defaults
+            g_camera.resolution = (1280, 720) # Example basic default
+            g_camera.framerate = 30 # Example basic default
+            print("get_camera(): PiCamera initialized with minimal defaults.")
         except Exception as e:
-            print(f"Error initializing camera: {e}")
+            print(f"get_camera(): Error initializing PiCamera: {e}")
             g_camera = None
     return g_camera
 
@@ -990,54 +1039,68 @@ def format_file_size(size_bytes):
     size_gb = size_mb / 1024
     return f"{size_gb:.1f} GB"
 
+# Moved gen_frames to be a module-level function that accepts cam and quality
+def gen_frames(cam, quality_value):
+    print("[STREAM DEBUG] gen_frames started")
+    if cam is None:
+        print("[STREAM DEBUG] gen_frames received None camera object. Aborting.")
+        return
+
+    # The diagnostic print for quality can be updated or removed if video_stream logs it
+    print(f"[STREAM DEBUG] gen_frames using quality: {quality_value}")
+    # Original status print, ensuring g_monitoring and g_connected are still relevant for the loop condition
+    print(f"gen_frames(): Status: g_camera_exists={cam is not None}, g_monitoring={g_monitoring}, g_connected={g_connected}")
+    
+    stream = io.BytesIO()
+    print(f"[STREAM DEBUG] Entering while loop: g_monitoring={g_monitoring}, g_connected={g_connected}")
+    while g_monitoring and g_connected: # These globals still control the loop
+        try:
+            print("gen_frames(): Inside loop, before cam.capture()")
+            stream.seek(0)
+            stream.truncate()
+
+            t_before_capture = time.time()
+            cam.capture(stream, format='jpeg', use_video_port=True, quality=quality_value)
+            t_after_capture = time.time()
+            
+            frame = stream.getvalue()
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+
+            capture_duration = t_after_capture - t_before_capture
+            current_sleep_duration = 0.05 # This is the value we're setting
+            
+            print(f"[STREAM TIMING] Capture: {capture_duration:.4f}s, Sleep: {current_sleep_duration:.2f}s, Target FPS: {1/current_sleep_duration:.1f}")
+            
+            time.sleep(current_sleep_duration) # Use the variable for clarity
+        except Exception as e:
+            print(f"[STREAM DEBUG] Error in video stream loop: {e}")
+            print(f"gen_frames(): Exception in loop: {e}")
+            break
+    print(f"[STREAM DEBUG] Exited while loop: g_monitoring={g_monitoring}, g_connected={g_connected}")
+    # Removed the outer try/except from original nested gen_frames as it's now simpler
+    # If specific cleanup for gen_frames is needed, a finally block can be added here.
+    print("[STREAM DEBUG] gen_frames finished")
+
 @app.route('/video_stream')
 def video_stream():
-    def gen_frames():
-        print("[STREAM DEBUG] gen_frames started")
-        try:
-            cam = get_camera()
-            if cam is None:
-                print("[STREAM DEBUG] Camera is None, exiting gen_frames.")
-                return
-            print(f"[STREAM DEBUG] Camera object: {cam}, resolution: {cam.resolution}, framerate: {cam.framerate}")
-            stream = io.BytesIO()
-            print(f"[STREAM DEBUG] Entering while loop: g_monitoring={g_monitoring}, g_connected={g_connected}")
-            while g_monitoring and g_connected:
-                try:
-                    # print("[STREAM DEBUG] Loop iteration started.")
-                    stream.seek(0)
-                    stream.truncate()
+    cam = get_camera()
+    if cam is None:
+        print("[STREAM ERROR] Camera not available for video_stream route.")
+        return "Camera not available", 503 # HTTP 503 Service Unavailable
 
-                    # Get current settings to determine quality for the stream
-                    current_settings = get_camera_settings()
-                    quality = 85 # Default
-                    if current_settings['compression'] == 'Low':
-                        quality = 40
-                    elif current_settings['compression'] == 'Medium':
-                        quality = 60
-                    elif current_settings['compression'] == 'High':
-                        quality = 85
-                    elif current_settings['compression'] == 'Very High':
-                        quality = 100
+    current_settings = get_camera_settings() # Fetches from session
+    apply_camera_settings(cam, current_settings) # Apply ALL settings from session
+       
+    quality = 85 # Default
+    if current_settings['compression'] == 'Low': quality = 40
+    elif current_settings['compression'] == 'Medium': quality = 60
+    elif current_settings['compression'] == 'High': quality = 85
+    elif current_settings['compression'] == 'Very High': quality = 100
+       
+    print(f"[video_stream] Applied settings. Quality for stream: {quality}")
 
-                    # Use video port for streaming
-                    cam.capture(stream, format='jpeg', use_video_port=True, quality=quality)
-                    frame = stream.getvalue()
-                    # print(f"[STREAM DEBUG] Frame captured, length: {len(frame)}")
-                    yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-                    # print("[STREAM DEBUG] Frame yielded.")
-                    time.sleep(0.05)  # Increased frame rate (20 FPS target)
-                except Exception as e:
-                    print(f"[STREAM DEBUG] Error in video stream loop: {e}")
-                    break
-            print(f"[STREAM DEBUG] Exited while loop: g_monitoring={g_monitoring}, g_connected={g_connected}")
-        except Exception as e:
-            print(f"[STREAM DEBUG] Error in video stream generator: {e}")
-        finally:
-            print("[STREAM DEBUG] gen_frames finished")
-
-    return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+    return Response(gen_frames(cam, quality), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/')
 def index():
@@ -1082,58 +1145,27 @@ def capture():
         compression = current_settings['compression']
         # fps = current_settings['fps'] # FPS is not directly used for single capture like this typically
         image_mode = current_settings['image'] # Renamed to avoid conflict with image variable later
-        rotation = current_settings['rotation']
-        effect = current_settings['effect']
-        sharpness = current_settings['sharpness']
+        # rotation = current_settings['rotation'] # Will be handled by apply_camera_settings
+        # effect = current_settings['effect'] # Will be handled by apply_camera_settings
+        # sharpness = current_settings['sharpness'] # Will be handled by apply_camera_settings
 
         cam = get_camera()
         if cam is None:
-            raise Exception("Failed to initialize camera")
+            raise Exception("Failed to initialize camera for capture")
 
-        # Apply camera settings for capture.
-        # apply_camera_settings(cam, current_settings)
-        # The above line is comprehensive. Alternatively, set parameters individually for capture:
-        # Note: apply_camera_settings also sets framerate, which might not be desired to change for a single capture
-        # if it's different from the stream/default. For capture, resolution, rotation, effect, sharpness, color_effects are key.
-
-        # If not streaming, set all parameters. If streaming, some parameters like resolution/fps
-        # are managed by the stream, but others like image effect, color, sharpness can be applied.
-        if not g_monitoring:
-            try:
-                cam.resolution = (width, height) # Crucial for capture
-                cam.rotation = int(rotation)
-                cam.image_effect = 'negative' if effect == 'Negative' else 'none'
-                cam.sharpness = 100 if sharpness == 'High' else (50 if sharpness == 'Medium' else 0)
-                if image_mode == 'Gray':
-                    cam.color_effects = (128, 128)
-                else:
-                    cam.color_effects = None
-            except Exception as e:
-                print(f"Error setting camera parameters for capture: {e}")
-                # Potentially cleanup and re-init camera, or just raise
-                raise Exception(f"Failed to set camera parameters for capture: {e}")
-        else:
-            # If monitoring, we might want to apply temporary changes for this capture
-            # For now, we'll primarily rely on the image_mode (color effects) and quality.
-            # Resolution/rotation for a capture during monitoring is tricky if it differs from stream settings.
-            # For simplicity, we'll assume the capture during monitoring uses current stream resolution/rotation.
-            # The main things that can be changed for a single JPEG capture are quality and color effects.
-            if image_mode == 'Gray':
-                cam.color_effects = (128, 128)
-            else:
-                cam.color_effects = None
-            # Sharpness and effect could also be set here if desired for a capture-specific alteration
-            # cam.sharpness = ...
-            # cam.image_effect = ...
-
-        quality = 85  # Default for capture quality, derived from 'compression' setting
-        if compression == 'Low':
+        # === This is the key part ===
+        print(f"[CAPTURE DEBUG] Applying settings before capture: {current_settings}")
+        apply_camera_settings(cam, current_settings) # Apply ALL current settings
+        
+        # Determine capture quality (compression is part of current_settings)
+        quality = 85  # Default for capture quality
+        if current_settings['compression'] == 'Low':
             quality = 40
-        elif compression == 'Medium':
+        elif current_settings['compression'] == 'Medium': # Use current_settings
             quality = 60
-        elif compression == 'High':
+        elif current_settings['compression'] == 'High': # Use current_settings
             quality = 85
-        elif compression == 'Very High':
+        elif current_settings['compression'] == 'Very High': # Use current_settings
             quality = 100
 
         stream = io.BytesIO()
@@ -1150,7 +1182,10 @@ def capture():
                 # For now, we assume capture during monitoring uses video port and current stream settings.
                 use_still_port_for_capture = not g_monitoring
 
+                t_before_still_capture = time.time()
                 cam.capture(stream, format='jpeg', quality=quality, use_video_port=not use_still_port_for_capture)
+                t_after_still_capture = time.time()
+                print(f"[CAPTURE TIMING] Still image cam.capture() took: {t_after_still_capture - t_before_still_capture:.4f}s")
                 break
             except Exception as e:
                 print(f"Capture attempt {attempt + 1} failed: {e}")
@@ -1174,8 +1209,11 @@ def capture():
         filename = f"server1_{timestamp}.jpg"
         filepath = os.path.join(TEMP_DIR, filename)
 
+        t_before_write = time.time()
         with open(filepath, 'wb') as f:
             f.write(image_bytes)
+        t_after_write = time.time()
+        print(f"[CAPTURE TIMING] File write for {filename} took: {t_after_write - t_before_write:.4f}s")
 
         image_size_bytes = len(image_bytes)
         formatted_size = format_file_size(image_size_bytes)
@@ -1214,21 +1252,24 @@ def start_monitor():
         stream_settings = saved_settings.copy() # Work with a copy for stream-specific overrides
 
         # Override resolution for streaming: max 1920x1080
-        # Use current resolution from saved_settings as a base, then cap it.
-        res_width, res_height = stream_settings['resolution']
+        original_res_w, original_res_h = stream_settings['resolution']
+        res_width, res_height = original_res_w, original_res_h
+        resolution_capped = False
         if res_width > 1920 or res_height > 1080:
             res_width, res_height = 1920, 1080
-            warning = 'Monitor mode resolution capped to 1920x1080 for performance.'
+            # warning = 'Monitor mode resolution capped to 1920x1080 for performance.' # This line is removed/commented
+            resolution_capped = True
         stream_settings['resolution'] = [res_width, res_height]
 
         # Override FPS for streaming for stability, e.g., cap at 30 FPS
-        # The user's preferred FPS (from saved_settings['fps']) is kept for captures.
+        original_fps = stream_settings['fps']
         STREAM_FPS = '30' # Define a stream-specific FPS
-        if stream_settings['fps'] != STREAM_FPS: # Optionally inform user if their saved FPS is different
+        fps_changed = False
+        if stream_settings['fps'] != STREAM_FPS:
             # warning = (warning + " " if warning else "") + f"Stream FPS set to {STREAM_FPS} for stability."
-            pass # Silently set it for now, could add a warning if stream_settings['fps'] was higher
+            fps_changed = True # We'll note if it was different, even if not higher
         stream_settings['fps'] = STREAM_FPS
-
+        
         # Other settings like compression, image mode, rotation, effect, sharpness
         # will be taken from the user's saved_settings via stream_settings.copy()
         # and applied by apply_camera_settings.
@@ -1236,8 +1277,13 @@ def start_monitor():
         # Apply the potentially modified settings for the preview stream
         apply_camera_settings(cam, stream_settings)
         g_monitoring = True
+        print(f"start_monitor_route(): Monitor mode started.")
+        if resolution_capped or fps_changed:
+            print(f"start_monitor_route(): Stream-specific settings applied: Resolution original={original_res_w}x{original_res_h}, new={res_width}x{res_height}. FPS original={original_fps}, new={STREAM_FPS}")
+
     except Exception as e:
          warning = (warning or '') + f' Error starting monitor mode: {str(e)}'
+         print(f"start_monitor_route(): Error starting monitor: {e}")
 
     if warning:
         session['warning'] = warning
@@ -1321,8 +1367,10 @@ def connect():
         try:
             g_camera = get_camera()  # Initialize camera with saved settings
             g_connected = True
+            print("connect_route(): Successfully connected camera.")
         except Exception as e:
             warning = f'Error connecting camera: {e}'
+            print(f"connect_route(): Error connecting camera: {e}")
             session['warning'] = warning
     else:
         warning = 'Camera is already connected.'
