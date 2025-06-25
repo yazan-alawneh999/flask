@@ -17,6 +17,7 @@ g_camera = None
 g_recording = False
 g_recording_file = None
 g_recording_lock = threading.Lock()
+g_stream_lock = threading.Lock() # Lock for synchronizing stream and still capture
 g_streaming = False
 g_connected = False  # Camera is disconnected by default
 g_monitoring = False  # Monitoring mode flag
@@ -1070,7 +1071,10 @@ def gen_frames(cam, quality_value):
             stream.truncate()
 
             t_before_capture = time.time()
-            cam.capture(stream, format='jpeg', use_video_port=True, quality=quality_value)
+            with g_stream_lock: # Acquire lock before capturing frame
+                if not g_monitoring: # Double check g_monitoring after acquiring lock
+                    break
+                cam.capture(stream, format='jpeg', use_video_port=True, quality=quality_value)
             t_after_capture = time.time()
             
             frame = stream.getvalue()
@@ -1142,6 +1146,7 @@ def index():
 
 @app.route('/capture', methods=['GET', 'POST'])
 def capture():
+    global g_monitoring # Declare g_monitoring as global at the top of the function
     if request.method == 'GET':
         return '<h2>This page is for image capture only. Please use the main form to capture an image.</h2><a href="/">Back to main page</a>'
 
@@ -1151,112 +1156,135 @@ def capture():
         session['warning'] = warning
         return redirect(request.referrer or url_for('index'))
 
+    cam = get_camera()
+    if cam is None:
+        session['warning'] = "Failed to initialize camera for capture."
+        return redirect(request.referrer or url_for('index'))
+
+    original_monitoring_state = g_monitoring
+    
     try:
-        # Get settings from session (updated by /update_stream_settings)
-        current_settings = get_camera_settings()
-        # save_camera_settings(current_settings) # Not strictly necessary here, settings are session-based
+        with g_stream_lock: # Acquire lock to pause the stream
+            print(f"[CAPTURE DEBUG] Acquired g_stream_lock. Original monitoring state: {original_monitoring_state}")
+            
+            # Temporarily set g_monitoring to False to allow high-res still capture settings
+            # and use of the still port.
+            if original_monitoring_state:
+                # global g_monitoring # No longer needed here
+                g_monitoring = False 
+                print(f"[CAPTURE DEBUG] Temporarily set g_monitoring to False.")
 
-        # Initialize capture_width, capture_height with desired values from settings
-        # These might be overridden by actual camera resolution after applying settings,
-        # especially if streaming and resolution is capped.
-        capture_width = current_settings['resolution'][0]
-        capture_height = current_settings['resolution'][1]
-        # compression = current_settings['compression'] # Used for quality setting below
-        # image_mode = current_settings['image'] # Handled by apply_camera_settings
+            # Get settings for high-quality still
+            # These are the general settings chosen by the user, which we want for the still.
+            still_settings = get_camera_settings()
+            
+            # Apply these settings. Since g_monitoring is now false (if it was true),
+            # resolution capping in apply_camera_settings will not occur.
+            print(f"[CAPTURE DEBUG] Applying settings for still capture: {still_settings}")
+            apply_camera_settings(cam, still_settings)
+            
+            # Read the actual resolution that will be used for the still capture
+            capture_width, capture_height = cam.resolution.width, cam.resolution.height
+            print(f"[CAPTURE DEBUG] Actual camera resolution for still capture: {capture_width}x{capture_height}")
 
-        cam = get_camera()
-        if cam is None:
-            raise Exception("Failed to initialize camera for capture")
+            # Determine capture quality for the still image
+            quality = 85  # Default
+            if still_settings['compression'] == 'Low': quality = 40
+            elif still_settings['compression'] == 'Medium': quality = 60
+            elif still_settings['compression'] == 'High': quality = 85
+            elif still_settings['compression'] == 'Very High': quality = 100
 
-        # Apply settings. apply_camera_settings might cap resolution if g_monitoring is True.
-        print(f"[CAPTURE DEBUG] Applying settings before capture: {current_settings}")
-        apply_camera_settings(cam, current_settings) 
-        
-        # After apply_camera_settings, read the actual resolution from the camera object
-        # This reflects any capping done by apply_camera_settings if g_monitoring is True
-        if cam.resolution: # Ensure cam.resolution is not None
-            actual_capture_resolution = cam.resolution
-            capture_width = actual_capture_resolution.width
-            capture_height = actual_capture_resolution.height
-            print(f"[CAPTURE DEBUG] Actual camera resolution for capture: {capture_width}x{capture_height}")
-        else:
-            print("[CAPTURE DEBUG] Warning: cam.resolution was None after apply_camera_settings. Using dimensions from settings.")
+            stream = io.BytesIO()
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    stream.seek(0)
+                    stream.truncate()
+                    t_before_still_capture = time.time()
+                    # Always use the still port for this capture route
+                    cam.capture(stream, format='jpeg', quality=quality, use_video_port=False)
+                    t_after_still_capture = time.time()
+                    print(f"[CAPTURE TIMING] Still image cam.capture() (use_video_port=False) took: {t_after_still_capture - t_before_still_capture:.4f}s")
+                    break
+                except Exception as e:
+                    print(f"Still capture attempt {attempt + 1} failed: {e}")
+                    if attempt == max_retries - 1:
+                        raise Exception("Failed to capture image after multiple attempts using still port")
+                    time.sleep(0.5) # Brief pause before retry
 
+            stream.seek(0)
+            image_bytes = stream.read()
+            if len(image_bytes) == 0:
+                raise Exception("Captured image is empty")
 
-        # Determine capture quality (compression is part of current_settings)
-        quality = 85  # Default for capture quality
-        if current_settings['compression'] == 'Low':
-            quality = 40
-        elif current_settings['compression'] == 'Medium': # Use current_settings
-            quality = 60
-        elif current_settings['compression'] == 'High': # Use current_settings
-            quality = 85
-        elif current_settings['compression'] == 'Very High': # Use current_settings
-            quality = 100
+            # --- Image saving and redirect logic (remains largely the same) ---
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"server1_{timestamp}.jpg"
+            filepath = os.path.join(TEMP_DIR, filename)
 
-        stream = io.BytesIO()
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                stream.seek(0)
-                stream.truncate()
-                # If g_monitoring is true, use_video_port=True is used.
-                # This is generally for continuous streaming. For a single high-res capture,
-                # it might be better to use the still port if settings (like resolution)
-                # significantly differ from stream settings.
-                # However, changing resolution on the fly while streaming is complex.
-                # For now, we assume capture during monitoring uses video port and current stream settings.
-                use_still_port_for_capture = not g_monitoring
+            t_before_write = time.time()
+            with open(filepath, 'wb') as f:
+                f.write(image_bytes)
+            t_after_write = time.time()
+            print(f"[CAPTURE TIMING] File write for {filename} took: {t_after_write - t_before_write:.4f}s")
 
-                t_before_still_capture = time.time()
-                cam.capture(stream, format='jpeg', quality=quality, use_video_port=not use_still_port_for_capture)
-                t_after_still_capture = time.time()
-                print(f"[CAPTURE TIMING] Still image cam.capture() took: {t_after_still_capture - t_before_still_capture:.4f}s")
-                break
-            except Exception as e:
-                print(f"Capture attempt {attempt + 1} failed: {e}")
-                if attempt == max_retries - 1:
-                    raise Exception("Failed to capture image after multiple attempts")
-                # Consider if full cleanup_camera() is needed or if re-init is enough
-                # cleanup_camera()
-                # time.sleep(1)
-                # cam = get_camera()
-                if cam is None: # This check might be redundant if get_camera() always returns or raises
-                    raise Exception("Failed to recover camera after capture error")
-                # If cam is not None, but capture failed, it might be a transient issue or specific setting.
-                # For now, we let it retry with the same camera object if it's still there.
+            image_size_bytes = len(image_bytes)
+            formatted_size = format_file_size(image_size_bytes)
+            cleanup_old_images()
 
-        stream.seek(0)
-        image_bytes = stream.read()
-        if len(image_bytes) == 0:
-            raise Exception("Captured image is empty")
+            redirect_url = url_for('index',
+                last_image=filename,
+                last_image_size=formatted_size,
+                last_image_width=capture_width,
+                last_image_height=capture_height,
+                last_capture_time=time.strftime('%Y-%m-%d %H:%M:%S')
+            )
+            # --- End of image saving and redirect logic ---
 
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"server1_{timestamp}.jpg"
-        filepath = os.path.join(TEMP_DIR, filename)
-
-        t_before_write = time.time()
-        with open(filepath, 'wb') as f:
-            f.write(image_bytes)
-        t_after_write = time.time()
-        print(f"[CAPTURE TIMING] File write for {filename} took: {t_after_write - t_before_write:.4f}s")
-
-        image_size_bytes = len(image_bytes)
-        formatted_size = format_file_size(image_size_bytes)
-        cleanup_old_images()
-
-        redirect_url = url_for('index',
-            last_image=filename,
-            last_image_size=formatted_size, # Use the new formatted size
-            last_image_width=capture_width, # Use actual width
-            last_image_height=capture_height, # Use actual height
-            last_capture_time=time.strftime('%Y-%m-%d %H:%M:%S')
-        )
-        return redirect(redirect_url)
     except Exception as e:
         warning = f'Error capturing image: {str(e)}'
         session['warning'] = warning
+        # Ensure g_monitoring is restored even if an error occurs within the lock
+        if original_monitoring_state and not g_monitoring:
+            # global g_monitoring # No longer needed here
+            g_monitoring = True
+            print(f"[CAPTURE DEBUG] Restored g_monitoring to True due to exception.")
+            # Re-apply stream settings if monitoring was active
+            # This is important if apply_camera_settings for still changed things
+            stream_settings_for_resume = get_camera_settings().copy()
+            # Apply stream-specific overrides if any (e.g., resolution cap, FPS for stream)
+            # This logic mirrors what's in /start_monitor
+            if stream_settings_for_resume['resolution'][0] > 1920 or stream_settings_for_resume['resolution'][1] > 1080:
+                stream_settings_for_resume['resolution'] = [1920, 1080]
+            stream_settings_for_resume['fps'] = '30' # Consistent stream FPS
+            apply_camera_settings(cam, stream_settings_for_resume)
+            print(f"[CAPTURE DEBUG] Re-applied stream settings after exception.")
+
         return redirect(request.referrer or url_for('index'))
+    finally:
+        # This block executes whether an exception occurred or not.
+        # Crucially, restore g_monitoring state and re-apply stream settings if it was originally active.
+        if original_monitoring_state:
+            if not g_monitoring: # If it was changed
+                # global g_monitoring # No longer needed here
+                g_monitoring = True
+                print(f"[CAPTURE DEBUG] Restored g_monitoring to True in finally block.")
+            
+            # Re-apply settings for the stream to ensure it resumes correctly.
+            # This is important because the still capture might have used different settings.
+            stream_settings_for_resume = get_camera_settings().copy()
+            # Apply stream-specific overrides (e.g., resolution cap at 1080p for video port, specific FPS for streaming)
+            # This logic should be consistent with how /start_monitor sets up the stream.
+            if stream_settings_for_resume['resolution'][0] > 1920 or stream_settings_for_resume['resolution'][1] > 1080:
+                stream_settings_for_resume['resolution'] = [1920, 1080]
+            stream_settings_for_resume['fps'] = '30' # Example: ensure stream FPS is 30
+            
+            print(f"[CAPTURE DEBUG] Re-applying stream settings in finally block: {stream_settings_for_resume}")
+            apply_camera_settings(cam, stream_settings_for_resume)
+            print(f"[CAPTURE DEBUG] Stream settings re-applied. Releasing g_stream_lock.")
+        # The lock is released automatically by the 'with g_stream_lock:' statement upon exiting the block.
+        
+    return redirect(redirect_url) # redirect_url is defined within the try block
 
 @app.route('/start_monitor', methods=['POST'])
 def start_monitor():
