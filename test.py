@@ -5,7 +5,42 @@ import threading
 import os
 import psutil
 import base64
-from picamera import PiCamera
+try:
+    from picamera import PiCamera
+except ImportError:
+    print("WARN: picamera library not found. Camera functionality will be disabled.")
+    # Define a dummy PiCamera class to avoid NameErrors later
+    class PiCamera:
+        def __init__(self, *args, **kwargs):
+            self.resolution = (0,0)
+            self.framerate = 0
+            self.recording = False
+            # Add any other attributes or methods that are accessed on g_camera
+            # before it's confirmed to be a real PiCamera instance.
+            # This is a minimal mock.
+            print("Initialized DUMMY PiCamera")
+
+        def close(self):
+            print("DUMMY PiCamera closed")
+            pass
+
+        def stop_preview(self):
+            pass
+
+        def stop_recording(self):
+            self.recording = False
+            pass
+
+        def capture(self, *args, **kwargs):
+            raise RuntimeError("Dummy PiCamera: Cannot capture.")
+
+        # Add other methods that might be called on a None camera or before full init
+        def __getattr__(self, name):
+            # Catch any other attribute access and return a dummy function or None
+            print(f"DUMMY PiCamera: __getattr__ for {name}")
+            return lambda *args, **kwargs: None
+
+
 import tempfile
 import shutil
 from datetime import datetime
@@ -714,7 +749,7 @@ TEMPLATE = '''
                                 <button type="submit" class="control-btn" {% if not g_connected %}disabled{% endif %}>Capture Image</button>
                             </form>
                             <form method="POST" action="/disconnect" style="display:contents;">
-                                <button type="submit" class="control-btn" {% if not g_connected %}disabled{% endif %}>Disconnect</button>
+                                <button type="submit" class="control-btn" {% if not g_connected or monitoring %}disabled{% endif %}>Disconnect</button>
                             </form>
                         </div>
                     </div>
@@ -772,34 +807,34 @@ TEMPLATE = '''
                             <div class="status-label">
                                 <span class="status-text cpu">CPU Usage</span>
                             </div>
-                            <span class="status-value">{{ status.cpu }}%</span>
+                            <span class="status-value" id="status-cpu">{{ status.cpu }}%</span>
                         </div>
                         <div class="status-item">
                             <div class="status-label">
                                 <span class="status-text memory">Memory</span>
                             </div>
-                            <span class="status-value">{{ status.mem }}%</span>
+                            <span class="status-value" id="status-mem">{{ status.mem }}%</span>
                         </div>
                         <div class="status-item">
                             <div class="status-label">
                                 <span class="status-text temperature">Temperature</span>
                             </div>
-                            <span class="status-value">{% if status.temperature %}{{ status.temperature }}°C{% else %}N/A{% endif %}</span>
+                            <span class="status-value" id="status-temp">{% if status.temperature %}{{ status.temperature }}°C{% else %}N/A{% endif %}</span>
                         </div>
                         <div class="status-item">
                             <div class="status-label">
                                 <span class="status-text network">Network</span>
                             </div>
-                            <span class="status-value">{{ status.transmitted }}</span>
+                            <span class="status-value" id="status-transmitted">{{ status.transmitted }}</span>
                         </div>
                         <div class="status-footer">
                             <div class="footer-item">
                                 <div class="footer-label">Last Access</div>
-                                <div class="footer-value">{{ status.last_access }}</div>
+                                <div class="footer-value" id="status-last-access">{{ status.last_access }}</div>
                             </div>
                             <div class="footer-item">
                                 <div class="footer-label">Latency</div>
-                                <div class="footer-value">{{ status.latency }} ms</div>
+                                <div class="footer-value" id="status-latency">{{ status.latency }} ms</div>
                             </div>
                         </div>
                     </div>
@@ -859,6 +894,26 @@ TEMPLATE = '''
                 });
             });
         }
+
+        function updateStatus() {
+            fetch('/status_api')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('status-cpu').textContent = data.cpu + '%';
+                    document.getElementById('status-mem').textContent = data.mem + '%';
+                    document.getElementById('status-temp').textContent = data.temperature ? data.temperature + '°C' : 'N/A';
+                    document.getElementById('status-transmitted').textContent = data.transmitted;
+                    document.getElementById('status-last-access').textContent = data.last_access;
+                    document.getElementById('status-latency').textContent = data.latency + ' ms';
+                })
+                .catch(error => console.error('Error updating status:', error));
+        }
+
+        // Update status every 5 seconds
+        setInterval(updateStatus, 5000);
+        // Initial call to populate status immediately
+        document.addEventListener('DOMContentLoaded', updateStatus);
+
     </script>
 </body>
 </html>
@@ -903,7 +958,7 @@ def get_status():
     # Get network stats
     net = psutil.net_io_counters()
     # Get CPU usage
-    cpu = psutil.cpu_percent(interval=0.1)
+    cpu = psutil.cpu_percent(interval=None)  # Use non-blocking
     # Get memory usage
     mem = psutil.virtual_memory().percent
     return {
@@ -1000,19 +1055,25 @@ def cleanup_camera():
             if g_monitoring:
                 try:
                     g_camera.stop_preview()
-                except:
-                    pass
+                except Exception as e:
+                    print(f"[CAMERA CLEANUP] stop_preview failed: {e}")
+            try:
+                # Attempt to stop recording if it's running (just in case)
+                if hasattr(g_camera, 'recording') and g_camera.recording:
+                    g_camera.stop_recording()
+            except Exception as e:
+                print(f"[CAMERA CLEANUP] stop_recording failed: {e}")
             try:
                 g_camera.close()
-            except:
-                pass
+                print("[CAMERA CLEANUP] g_camera closed successfully.")
+            except Exception as e:
+                print(f"[CAMERA CLEANUP] camera.close() failed: {e}")
     except Exception as e:
-        print(f"Error cleaning up camera: {e}")
+        print(f"[CAMERA CLEANUP ERROR] Unexpected error: {e}")
     finally:
         g_camera = None
         g_monitoring = False
-        # Add safety delay after cleanup
-        time.sleep(0.5)
+        time.sleep(0.5)  # Let hardware fully release
 
 def cleanup_old_images():
     """Clean up images older than 1 hour"""
@@ -1435,16 +1496,31 @@ def connect():
 def disconnect():
     global g_camera, g_connected, g_monitoring
     warning = None
+
     if g_connected:
         try:
+            # Force stop stream first
+            if g_monitoring:
+                try:
+                    g_monitoring = False
+                    time.sleep(0.25)  # Let the stream loop exit
+                    if g_camera:
+                        g_camera.stop_preview()  # Just in case
+                    print("[DISCONNECT DEBUG] Stream stopped before camera cleanup.")
+                except Exception as e:
+                    print(f"[DISCONNECT WARNING] Failed to stop monitoring cleanly: {e}")
+
             cleanup_camera()
             g_connected = False
+            print("[DISCONNECT DEBUG] Camera successfully disconnected.")
         except Exception as e:
             warning = f'Error disconnecting camera: {e}'
+            print(f"[DISCONNECT ERROR] {e}")
             session['warning'] = warning
     else:
         warning = 'Camera is already disconnected.'
         session['warning'] = warning
+
     return redirect(request.referrer or url_for('index'))
 
 @app.route('/update_stream_settings', methods=['POST'])
@@ -1511,6 +1587,11 @@ def get_image(filename):
     except Exception as e:
         print(f"Error serving image {filename}: {e}")
         return str(e), 404
+
+@app.route('/status_api')
+def status_api():
+    """API endpoint to get system status."""
+    return jsonify(get_status())
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True) 
