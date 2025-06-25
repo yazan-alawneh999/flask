@@ -772,34 +772,34 @@ TEMPLATE = '''
                             <div class="status-label">
                                 <span class="status-text cpu">CPU Usage</span>
                             </div>
-                            <span class="status-value">{{ status.cpu }}%</span>
+                            <span class="status-value" id="status-cpu">{{ status.cpu }}%</span>
                         </div>
                         <div class="status-item">
                             <div class="status-label">
                                 <span class="status-text memory">Memory</span>
                             </div>
-                            <span class="status-value">{{ status.mem }}%</span>
+                            <span class="status-value" id="status-mem">{{ status.mem }}%</span>
                         </div>
                         <div class="status-item">
                             <div class="status-label">
                                 <span class="status-text temperature">Temperature</span>
                             </div>
-                            <span class="status-value">{% if status.temperature %}{{ status.temperature }}°C{% else %}N/A{% endif %}</span>
+                            <span class="status-value" id="status-temp">{% if status.temperature %}{{ status.temperature }}°C{% else %}N/A{% endif %}</span>
                         </div>
                         <div class="status-item">
                             <div class="status-label">
                                 <span class="status-text network">Network</span>
                             </div>
-                            <span class="status-value">{{ status.transmitted }}</span>
+                            <span class="status-value" id="status-net">{{ status.transmitted }}</span>
                         </div>
                         <div class="status-footer">
                             <div class="footer-item">
                                 <div class="footer-label">Last Access</div>
-                                <div class="footer-value">{{ status.last_access }}</div>
+                                <div class="footer-value" id="status-last-access">{{ status.last_access }}</div>
                             </div>
                             <div class="footer-item">
                                 <div class="footer-label">Latency</div>
-                                <div class="footer-value">{{ status.latency }} ms</div>
+                                <div class="footer-value" id="status-latency">{{ status.latency }} ms</div>
                             </div>
                         </div>
                     </div>
@@ -859,6 +859,35 @@ TEMPLATE = '''
                 });
             });
         }
+
+        function updateStatus() {
+            fetch('/status_api')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        console.error('Error fetching status:', data.error);
+                        return;
+                    }
+                    document.getElementById('status-cpu').textContent = data.cpu + '%';
+                    document.getElementById('status-mem').textContent = data.mem + '%';
+                    document.getElementById('status-temp').textContent = data.temperature ? data.temperature + '°C' : 'N/A';
+                    document.getElementById('status-net').textContent = data.transmitted;
+                    document.getElementById('status-last-access').textContent = data.last_access;
+                    document.getElementById('status-latency').textContent = data.latency + ' ms';
+                    // For the overall connection status, it's often tied to page reload
+                    // or more complex UI updates, but if there's a simple text field for it:
+                    // const statusTextElement = document.getElementById('camera-connection-status-text');
+                    // if (statusTextElement) statusTextElement.textContent = data.status;
+
+                })
+                .catch(error => console.error('Error fetching status from API:', error));
+        }
+
+        // Update status every 3 seconds
+        setInterval(updateStatus, 3000);
+        // Initial call to load status immediately
+        updateStatus();
+
     </script>
 </body>
 </html>
@@ -900,12 +929,12 @@ def get_temp():
 
 def get_status():
     temp = get_temp()
-    # Get network stats
-    net = psutil.net_io_counters()
-    # Get CPU usage
-    cpu = psutil.cpu_percent(interval=0.1)
-    # Get memory usage
+
+    # Fetch CPU instantly instead of 0.1s delay
+    cpu = psutil.cpu_percent(interval=None)  # Use non-blocking
     mem = psutil.virtual_memory().percent
+    net = psutil.net_io_counters()
+
     return {
         'temperature': temp,
         'signal': 'Excellent',
@@ -1000,19 +1029,25 @@ def cleanup_camera():
             if g_monitoring:
                 try:
                     g_camera.stop_preview()
-                except:
-                    pass
+                except Exception as e:
+                    print(f"[CAMERA CLEANUP] stop_preview failed: {e}")
+            try:
+                # Attempt to stop recording if it's running (just in case)
+                if hasattr(g_camera, 'recording') and g_camera.recording:
+                    g_camera.stop_recording()
+            except Exception as e:
+                print(f"[CAMERA CLEANUP] stop_recording failed: {e}")
             try:
                 g_camera.close()
-            except:
-                pass
+                print("[CAMERA CLEANUP] g_camera closed successfully.")
+            except Exception as e:
+                print(f"[CAMERA CLEANUP] camera.close() failed: {e}")
     except Exception as e:
-        print(f"Error cleaning up camera: {e}")
+        print(f"[CAMERA CLEANUP ERROR] Unexpected error: {e}")
     finally:
         g_camera = None
         g_monitoring = False
-        # Add safety delay after cleanup
-        time.sleep(0.5)
+        time.sleep(0.5)  # Let hardware fully release
 
 def cleanup_old_images():
     """Clean up images older than 1 hour"""
@@ -1265,24 +1300,37 @@ def capture():
         # This block executes whether an exception occurred or not.
         # Crucially, restore g_monitoring state and re-apply stream settings if it was originally active.
         if original_monitoring_state:
-            if not g_monitoring: # If it was changed
-                # global g_monitoring # No longer needed here
+            if not g_monitoring:
                 g_monitoring = True
-                print(f"[CAPTURE DEBUG] Restored g_monitoring to True in finally block.")
+                print("[CAPTURE DEBUG] Restored g_monitoring to True in finally block.")
+                time.sleep(0.25)  # Allow hardware to settle
             
-            # Re-apply settings for the stream to ensure it resumes correctly.
-            # This is important because the still capture might have used different settings.
-            stream_settings_for_resume = get_camera_settings().copy()
-            # Apply stream-specific overrides (e.g., resolution cap at 1080p for video port, specific FPS for streaming)
-            # This logic should be consistent with how /start_monitor sets up the stream.
-            if stream_settings_for_resume['resolution'][0] > 1920 or stream_settings_for_resume['resolution'][1] > 1080:
-                stream_settings_for_resume['resolution'] = [1920, 1080]
-            stream_settings_for_resume['fps'] = '30' # Example: ensure stream FPS is 30
-            
-            print(f"[CAPTURE DEBUG] Re-applying stream settings in finally block: {stream_settings_for_resume}")
-            apply_camera_settings(cam, stream_settings_for_resume)
-            print(f"[CAPTURE DEBUG] Stream settings re-applied. Releasing g_stream_lock.")
+            if g_camera: # Ensure g_camera is still valid
+                try:
+                    stream_settings_for_resume = get_camera_settings().copy()
+                    # Ensure stream resolution is capped for video port compatibility
+                    if stream_settings_for_resume['resolution'][0] > 1920 or stream_settings_for_resume['resolution'][1] > 1080:
+                        print(f"[CAPTURE DEBUG] Capping stream resume resolution from {stream_settings_for_resume['resolution']} to 1920x1080.")
+                        stream_settings_for_resume['resolution'] = [1920, 1080]
+                    # Ensure a consistent FPS for streaming
+                    original_fps_for_resume = stream_settings_for_resume.get('fps', 'UNKNOWN')
+                    stream_settings_for_resume['fps'] = '30'
+                    print(f"[CAPTURE DEBUG] Setting stream resume FPS to '30' (was {original_fps_for_resume}).")
+
+                    print(f"[CAPTURE DEBUG] Attempting to re-apply stream settings in finally block: {stream_settings_for_resume}")
+                    apply_camera_settings(g_camera, stream_settings_for_resume)
+                    print("[CAPTURE DEBUG] Successfully re-applied stream settings after still capture.")
+                except Exception as e:
+                    print(f"[CAPTURE ERROR] Failed to re-apply stream settings: {e}")
+                    g_monitoring = False  # Fail-safe: disable stream if settings can't be restored
+                    print(f"[CAPTURE DEBUG] Set g_monitoring to False due to error re-applying stream settings.")
+            else:
+                print("[CAPTURE ERROR] g_camera object is None in finally block. Cannot re-apply stream settings.")
+                g_monitoring = False # Fail-safe if camera object is lost
+                print(f"[CAPTURE DEBUG] Set g_monitoring to False as g_camera is None.")
+
         # The lock is released automatically by the 'with g_stream_lock:' statement upon exiting the block.
+        print(f"[CAPTURE DEBUG] Exiting finally block. g_monitoring state: {g_monitoring}")
         
     return redirect(redirect_url) # redirect_url is defined within the try block
 
@@ -1511,6 +1559,16 @@ def get_image(filename):
     except Exception as e:
         print(f"Error serving image {filename}: {e}")
         return str(e), 404
+
+@app.route('/status_api')
+def status_api():
+    """API endpoint to get system status"""
+    try:
+        status_data = get_status()
+        return jsonify(status_data)
+    except Exception as e:
+        print(f"Error in /status_api: {e}")
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True) 
