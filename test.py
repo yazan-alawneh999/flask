@@ -5,7 +5,42 @@ import threading
 import os
 import psutil
 import base64
-from picamera import PiCamera
+try:
+    from picamera import PiCamera
+except ImportError:
+    print("WARN: picamera library not found. Camera functionality will be disabled.")
+    # Define a dummy PiCamera class to avoid NameErrors later
+    class PiCamera:
+        def __init__(self, *args, **kwargs):
+            self.resolution = (0,0)
+            self.framerate = 0
+            self.recording = False
+            # Add any other attributes or methods that are accessed on g_camera
+            # before it's confirmed to be a real PiCamera instance.
+            # This is a minimal mock.
+            print("Initialized DUMMY PiCamera")
+
+        def close(self):
+            print("DUMMY PiCamera closed")
+            pass
+
+        def stop_preview(self):
+            pass
+
+        def stop_recording(self):
+            self.recording = False
+            pass
+
+        def capture(self, *args, **kwargs):
+            raise RuntimeError("Dummy PiCamera: Cannot capture.")
+
+        # Add other methods that might be called on a None camera or before full init
+        def __getattr__(self, name):
+            # Catch any other attribute access and return a dummy function or None
+            print(f"DUMMY PiCamera: __getattr__ for {name}")
+            return lambda *args, **kwargs: None
+
+
 import tempfile
 import shutil
 from datetime import datetime
@@ -714,7 +749,7 @@ TEMPLATE = '''
                                 <button type="submit" class="control-btn" {% if not g_connected %}disabled{% endif %}>Capture Image</button>
                             </form>
                             <form method="POST" action="/disconnect" style="display:contents;">
-                                <button type="submit" class="control-btn" {% if not g_connected %}disabled{% endif %}>Disconnect</button>
+                                <button type="submit" class="control-btn" {% if not g_connected or monitoring %}disabled{% endif %}>Disconnect</button>
                             </form>
                         </div>
                     </div>
@@ -790,7 +825,7 @@ TEMPLATE = '''
                             <div class="status-label">
                                 <span class="status-text network">Network</span>
                             </div>
-                            <span class="status-value" id="status-net">{{ status.transmitted }}</span>
+                            <span class="status-value" id="status-transmitted">{{ status.transmitted }}</span>
                         </div>
                         <div class="status-footer">
                             <div class="footer-item">
@@ -864,29 +899,20 @@ TEMPLATE = '''
             fetch('/status_api')
                 .then(response => response.json())
                 .then(data => {
-                    if (data.error) {
-                        console.error('Error fetching status:', data.error);
-                        return;
-                    }
                     document.getElementById('status-cpu').textContent = data.cpu + '%';
                     document.getElementById('status-mem').textContent = data.mem + '%';
                     document.getElementById('status-temp').textContent = data.temperature ? data.temperature + '°C' : 'N/A';
-                    document.getElementById('status-net').textContent = data.transmitted;
+                    document.getElementById('status-transmitted').textContent = data.transmitted;
                     document.getElementById('status-last-access').textContent = data.last_access;
                     document.getElementById('status-latency').textContent = data.latency + ' ms';
-                    // For the overall connection status, it's often tied to page reload
-                    // or more complex UI updates, but if there's a simple text field for it:
-                    // const statusTextElement = document.getElementById('camera-connection-status-text');
-                    // if (statusTextElement) statusTextElement.textContent = data.status;
-
                 })
-                .catch(error => console.error('Error fetching status from API:', error));
+                .catch(error => console.error('Error updating status:', error));
         }
 
-        // Update status every 3 seconds
-        setInterval(updateStatus, 3000);
-        // Initial call to load status immediately
-        updateStatus();
+        // Update status every 5 seconds
+        setInterval(updateStatus, 5000);
+        // Initial call to populate status immediately
+        document.addEventListener('DOMContentLoaded', updateStatus);
 
     </script>
 </body>
@@ -929,12 +955,12 @@ def get_temp():
 
 def get_status():
     temp = get_temp()
-
-    # Fetch CPU instantly instead of 0.1s delay
-    cpu = psutil.cpu_percent(interval=None)  # Use non-blocking
-    mem = psutil.virtual_memory().percent
+    # Get network stats
     net = psutil.net_io_counters()
-
+    # Get CPU usage
+    cpu = psutil.cpu_percent(interval=None)  # Use non-blocking
+    # Get memory usage
+    mem = psutil.virtual_memory().percent
     return {
         'temperature': temp,
         'signal': 'Excellent',
@@ -1300,37 +1326,24 @@ def capture():
         # This block executes whether an exception occurred or not.
         # Crucially, restore g_monitoring state and re-apply stream settings if it was originally active.
         if original_monitoring_state:
-            if not g_monitoring:
+            if not g_monitoring: # If it was changed
+                # global g_monitoring # No longer needed here
                 g_monitoring = True
-                print("[CAPTURE DEBUG] Restored g_monitoring to True in finally block.")
-                time.sleep(0.25)  # Allow hardware to settle
+                print(f"[CAPTURE DEBUG] Restored g_monitoring to True in finally block.")
             
-            if g_camera: # Ensure g_camera is still valid
-                try:
-                    stream_settings_for_resume = get_camera_settings().copy()
-                    # Ensure stream resolution is capped for video port compatibility
-                    if stream_settings_for_resume['resolution'][0] > 1920 or stream_settings_for_resume['resolution'][1] > 1080:
-                        print(f"[CAPTURE DEBUG] Capping stream resume resolution from {stream_settings_for_resume['resolution']} to 1920x1080.")
-                        stream_settings_for_resume['resolution'] = [1920, 1080]
-                    # Ensure a consistent FPS for streaming
-                    original_fps_for_resume = stream_settings_for_resume.get('fps', 'UNKNOWN')
-                    stream_settings_for_resume['fps'] = '30'
-                    print(f"[CAPTURE DEBUG] Setting stream resume FPS to '30' (was {original_fps_for_resume}).")
-
-                    print(f"[CAPTURE DEBUG] Attempting to re-apply stream settings in finally block: {stream_settings_for_resume}")
-                    apply_camera_settings(g_camera, stream_settings_for_resume)
-                    print("[CAPTURE DEBUG] Successfully re-applied stream settings after still capture.")
-                except Exception as e:
-                    print(f"[CAPTURE ERROR] Failed to re-apply stream settings: {e}")
-                    g_monitoring = False  # Fail-safe: disable stream if settings can't be restored
-                    print(f"[CAPTURE DEBUG] Set g_monitoring to False due to error re-applying stream settings.")
-            else:
-                print("[CAPTURE ERROR] g_camera object is None in finally block. Cannot re-apply stream settings.")
-                g_monitoring = False # Fail-safe if camera object is lost
-                print(f"[CAPTURE DEBUG] Set g_monitoring to False as g_camera is None.")
-
+            # Re-apply settings for the stream to ensure it resumes correctly.
+            # This is important because the still capture might have used different settings.
+            stream_settings_for_resume = get_camera_settings().copy()
+            # Apply stream-specific overrides (e.g., resolution cap at 1080p for video port, specific FPS for streaming)
+            # This logic should be consistent with how /start_monitor sets up the stream.
+            if stream_settings_for_resume['resolution'][0] > 1920 or stream_settings_for_resume['resolution'][1] > 1080:
+                stream_settings_for_resume['resolution'] = [1920, 1080]
+            stream_settings_for_resume['fps'] = '30' # Example: ensure stream FPS is 30
+            
+            print(f"[CAPTURE DEBUG] Re-applying stream settings in finally block: {stream_settings_for_resume}")
+            apply_camera_settings(cam, stream_settings_for_resume)
+            print(f"[CAPTURE DEBUG] Stream settings re-applied. Releasing g_stream_lock.")
         # The lock is released automatically by the 'with g_stream_lock:' statement upon exiting the block.
-        print(f"[CAPTURE DEBUG] Exiting finally block. g_monitoring state: {g_monitoring}")
         
     return redirect(redirect_url) # redirect_url is defined within the try block
 
@@ -1483,16 +1496,31 @@ def connect():
 def disconnect():
     global g_camera, g_connected, g_monitoring
     warning = None
+
     if g_connected:
         try:
+            # Force stop stream first
+            if g_monitoring:
+                try:
+                    g_monitoring = False
+                    time.sleep(0.25)  # Let the stream loop exit
+                    if g_camera:
+                        g_camera.stop_preview()  # Just in case
+                    print("[DISCONNECT DEBUG] Stream stopped before camera cleanup.")
+                except Exception as e:
+                    print(f"[DISCONNECT WARNING] Failed to stop monitoring cleanly: {e}")
+
             cleanup_camera()
             g_connected = False
+            print("[DISCONNECT DEBUG] Camera successfully disconnected.")
         except Exception as e:
             warning = f'Error disconnecting camera: {e}'
+            print(f"[DISCONNECT ERROR] {e}")
             session['warning'] = warning
     else:
         warning = 'Camera is already disconnected.'
         session['warning'] = warning
+
     return redirect(request.referrer or url_for('index'))
 
 @app.route('/update_stream_settings', methods=['POST'])
@@ -1562,13 +1590,8 @@ def get_image(filename):
 
 @app.route('/status_api')
 def status_api():
-    """API endpoint to get system status"""
-    try:
-        status_data = get_status()
-        return jsonify(status_data)
-    except Exception as e:
-        print(f"Error in /status_api: {e}")
-        return jsonify({'error': str(e)}), 500
+    """API endpoint to get system status."""
+    return jsonify(get_status())
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True) 
