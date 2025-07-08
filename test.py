@@ -5,6 +5,10 @@ import threading
 import os
 import psutil
 import base64
+import board # For I2C
+import busio # For I2C
+from adafruit_ina219 import INA219, ADCResolution, BusVoltageRange # For INA219 sensor
+
 try:
     from picamera import PiCamera
 except ImportError:
@@ -839,6 +843,32 @@ TEMPLATE = '''
                         </div>
                     </div>
                 </div>
+                <!-- Battery Status Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Battery Status</h3>
+                    </div>
+                    <div class="card-content">
+                        <div class="status-item">
+                            <div class="status-label">
+                                <span class="status-text">Voltage</span>
+                            </div>
+                            <span class="status-value" id="status-voltage">N/A</span>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-label">
+                                <span class="status-text">Current</span>
+                            </div>
+                            <span class="status-value" id="status-current">N/A</span>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-label">
+                                <span class="status-text">Percentage</span>
+                            </div>
+                            <span class="status-value" id="status-percentage">N/A</span>
+                        </div>
+                    </div>
+                </div>
                 <!-- Camera Settings Card was here, now moved to main content area -->
             </aside>
         </main>
@@ -914,6 +944,52 @@ TEMPLATE = '''
         // Initial call to populate status immediately
         document.addEventListener('DOMContentLoaded', updateStatus);
 
+        function updateBatteryStatus() {
+            fetch('/battery_status_api')
+                .then(response => response.json())
+                .then(data => {
+                    const voltageEl = document.getElementById('status-voltage');
+                    const currentEl = document.getElementById('status-current');
+                    const percentageEl = document.getElementById('status-percentage');
+
+                    if (data.error) {
+                        voltageEl.textContent = 'Error';
+                        currentEl.textContent = 'Error';
+                        percentageEl.textContent = 'Error';
+                        console.error('Error fetching battery status:', data.error);
+                        return;
+                    }
+
+                    voltageEl.textContent = data.voltage !== null ? data.voltage.toFixed(2) + ' V' : 'N/A';
+                    currentEl.textContent = data.current_mA !== null ? data.current_mA.toFixed(0) + ' mA' : 'N/A';
+
+                    if (data.percentage !== null) {
+                        percentageEl.textContent = data.percentage.toFixed(0) + ' %';
+                        if (data.percentage > 50) {
+                            percentageEl.style.color = '#4ade80'; // Green
+                        } else if (data.percentage >= 20) {
+                            percentageEl.style.color = '#fbbf24'; // Yellow (amber-400 from Tailwind)
+                        } else {
+                            percentageEl.style.color = '#f87171'; // Red (red-400 from Tailwind)
+                        }
+                    } else {
+                        percentageEl.textContent = 'N/A';
+                        percentageEl.style.color = ''; // Reset color
+                    }
+                })
+                .catch(error => {
+                    console.error('Error updating battery status:', error);
+                    document.getElementById('status-voltage').textContent = 'Fetch Error';
+                    document.getElementById('status-current').textContent = 'Fetch Error';
+                    document.getElementById('status-percentage').textContent = 'Fetch Error';
+                });
+        }
+
+        // Update battery status every 10 seconds
+        setInterval(updateBatteryStatus, 10000);
+        // Initial call to populate battery status immediately
+        document.addEventListener('DOMContentLoaded', updateBatteryStatus);
+
     </script>
 </body>
 </html>
@@ -971,6 +1047,85 @@ def get_status():
         'cpu': cpu,
         'mem': mem
     }
+
+# --- INA219 Battery Functions ---
+# Global INA219 instance to avoid re-initialization
+g_ina219 = None
+SHUNT_OHMS = 0.1
+# Battery voltage range for percentage calculation (adjust as needed for your battery)
+# Common Li-Ion/LiPo: 3.0V (empty) to 4.2V (full)
+MIN_BATTERY_VOLTAGE = 3.0
+MAX_BATTERY_VOLTAGE = 4.2
+
+def init_ina219():
+    """Initializes the INA219 sensor."""
+    global g_ina219
+    if g_ina219 is None:
+        try:
+            i2c_bus = busio.I2C(board.SCL, board.SDA)
+            g_ina219 = INA219(i2c_bus, shunt_ohms=SHUNT_OHMS)
+            g_ina219.bus_adc_resolution = ADCResolution.ADCRES_12BIT_32S # More samples for better accuracy
+            g_ina219.shunt_adc_resolution = ADCResolution.ADCRES_12BIT_32S
+            # g_ina219.bus_voltage_range = BusVoltageRange.RANGE_16V # Default is 16V, suitable for most Pi projects
+            print("INA219 sensor initialized successfully.")
+        except Exception as e:
+            print(f"Error initializing INA219: {e}")
+            g_ina219 = "error" # Mark as error to avoid repeated init attempts on error
+    return g_ina219
+
+def get_battery_stats():
+    """Reads battery voltage, current, and estimates percentage."""
+    ina = init_ina219()
+
+    if ina == "error" or ina is None: # If initialization failed or sensor not found
+        return {
+            'voltage': None,
+            'current_mA': None,
+            'percentage': None,
+            'error': "INA219 sensor not detected or error during initialization."
+        }
+
+    try:
+        bus_voltage = ina.bus_voltage  # Voltage of V+ (load side) relative to GND
+        shunt_voltage = ina.shunt_voltage  # Voltage between V+ and V- across the shunt
+        current_mA = ina.current  # Current in mA
+
+        # Calculate battery percentage (linear interpolation)
+        # Voltage measured is bus_voltage. For a typical setup where INA219 measures power to the Pi,
+        # bus_voltage is the battery voltage minus the drop across the shunt resistor.
+        # For battery percentage, we should ideally use the voltage directly from the battery terminals
+        # before the shunt, or add back the shunt_voltage to bus_voltage if V- is connected to battery ground.
+        # Assuming bus_voltage is close enough to battery voltage for this estimation:
+        actual_battery_voltage = bus_voltage + (shunt_voltage / 1000) # Add back shunt voltage drop (mV to V)
+
+        if actual_battery_voltage <= MIN_BATTERY_VOLTAGE:
+            percentage = 0
+        elif actual_battery_voltage >= MAX_BATTERY_VOLTAGE:
+            percentage = 100
+        else:
+            percentage = ((actual_battery_voltage - MIN_BATTERY_VOLTAGE) /
+                          (MAX_BATTERY_VOLTAGE - MIN_BATTERY_VOLTAGE)) * 100
+
+        # Clamp percentage to 0-100 range just in case
+        percentage = max(0, min(100, percentage))
+
+        return {
+            'voltage': round(actual_battery_voltage, 2), # V
+            'current_mA': round(current_mA, 2), # mA
+            'percentage': round(percentage, 0) # %
+        }
+    except Exception as e:
+        print(f"Error reading from INA219: {e}")
+        # Attempt to re-initialize on next call if there's a runtime error
+        global g_ina219
+        g_ina219 = None # Reset to allow re-initialization
+        return {
+            'voltage': None,
+            'current_mA': None,
+            'percentage': None,
+            'error': str(e)
+        }
+# --- END INA219 Battery Functions ---
 
 def apply_camera_settings(cam, settings):
     """Apply camera settings with proper validation and error handling"""
@@ -1592,6 +1747,11 @@ def get_image(filename):
 def status_api():
     """API endpoint to get system status."""
     return jsonify(get_status())
+
+@app.route('/battery_status_api')
+def battery_status_api():
+    """API endpoint to get battery status."""
+    return jsonify(get_battery_stats())
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5001, debug=True) 
