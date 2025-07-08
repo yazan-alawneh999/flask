@@ -953,12 +953,17 @@ TEMPLATE = '''
                     const percentageEl = document.getElementById('status-percentage');
 
                     if (data.error) {
-                        voltageEl.textContent = 'Error';
-                        currentEl.textContent = 'Error';
-                        percentageEl.textContent = 'Error';
+                        // Display the specific error from Python in the voltage field
+                        voltageEl.textContent = data.error;
+                        voltageEl.style.color = '#f87171'; // Red color for error message
+                        currentEl.textContent = 'N/A';
+                        percentageEl.textContent = 'N/A';
+                        percentageEl.style.color = ''; // Reset color
                         console.error('Error fetching battery status:', data.error);
                         return;
                     }
+
+                    voltageEl.style.color = ''; // Reset color if previously an error
 
                     voltageEl.textContent = data.voltage !== null ? data.voltage.toFixed(2) + ' V' : 'N/A';
                     currentEl.textContent = data.current_mA !== null ? data.current_mA.toFixed(0) + ' mA' : 'N/A';
@@ -1077,12 +1082,19 @@ def get_battery_stats():
     """Reads battery voltage, current, and estimates percentage."""
     ina = init_ina219()
 
-    if ina == "error" or ina is None: # If initialization failed or sensor not found
+    if ina == "error": # Specific string indicating persistent init error
         return {
             'voltage': None,
             'current_mA': None,
             'percentage': None,
-            'error': "INA219 sensor not detected or error during initialization."
+            'error': "INA219 init failed. Check connection/console."
+        }
+    if ina is None: # Sensor not found by Blinka, typically ValueError or RuntimeError from init_ina219
+        return {
+            'voltage': None,
+            'current_mA': None,
+            'percentage': None,
+            'error': "INA219 not found. Check I2C connection."
         }
 
     try:
