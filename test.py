@@ -611,7 +611,7 @@ TEMPLATE = '''
             width: 100%;
             max-width: 480px;
             height: 270px;
-            object-fit: contain;
+            object-fit: cover;
             border-radius: 0.5rem;
             border: 1px solid #475569;
             background: #0f172a;
@@ -627,6 +627,7 @@ TEMPLATE = '''
                 <div class="title-section">
                     <h1 class="main-title">StarckCam</h1>
                     <p class="subtitle">Raspberry Pi Camera Control</p>
+                    <p class="subtitle" id="app-timer" style="margin-top: 0.25rem;">App Usage: 00:00:00</p> <!-- Timer Display -->
                 </div>
                
                 <form method="POST" action="/connect" style="display:inline;">
@@ -913,6 +914,51 @@ TEMPLATE = '''
         setInterval(updateStatus, 5000);
         // Initial call to populate status immediately
         document.addEventListener('DOMContentLoaded', updateStatus);
+
+        // Timer functionality
+        const timerElement = document.getElementById('app-timer');
+        let appStartTime;
+
+        function formatTime(seconds) {
+            const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
+            const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
+            const s = Math.floor(seconds % 60).toString().padStart(2, '0');
+            return `${h}:${m}:${s}`;
+        }
+
+        function updateTimer() {
+            if (!appStartTime) {
+                // Check localStorage for a previously stored start time
+                const storedStartTime = localStorage.getItem('appStartTime');
+                if (storedStartTime) {
+                    appStartTime = parseInt(storedStartTime, 10);
+                } else {
+                    // If no stored time, this is the first load in this "session"
+                    appStartTime = Date.now();
+                    localStorage.setItem('appStartTime', appStartTime.toString());
+                }
+            }
+            const elapsedTime = Math.floor((Date.now() - appStartTime) / 1000);
+            if (timerElement) { // Ensure element exists
+                timerElement.textContent = 'App Usage: ' + formatTime(elapsedTime);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            // Initialize or load start time and update timer
+            // The logic for getting/setting appStartTime is now within updateTimer's first call
+            updateTimer(); 
+            setInterval(updateTimer, 1000); // Update timer every second
+
+            // Optional: Add a way to reset the timer, e.g., for testing
+            // You could call this from the console: resetAppTimer()
+            window.resetAppTimer = function() {
+                localStorage.removeItem('appStartTime');
+                appStartTime = null; // Clear the in-memory variable
+                updateTimer(); // Restart timer from 00:00:00
+                console.log("App timer has been reset.");
+            };
+        });
 
     </script>
 </body>
@@ -1594,5 +1640,5 @@ def status_api():
     return jsonify(get_status())
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5001, debug=True) 
+    app.run(host='0.0.0.0', port=5001, debug=True, threaded=True) 
 
