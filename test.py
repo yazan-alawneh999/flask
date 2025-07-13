@@ -859,11 +859,6 @@ TEMPLATE = '''
         {% endif %}
     </div>
     <script>
-        {% if not g_connected %}
-        if (typeof window.resetAppTimer === 'function') {
-            window.resetAppTimer();
-        }
-        {% endif %}
         const settingsForm = document.getElementById('settings-form');
         if (settingsForm) {
             const selectElements = settingsForm.querySelectorAll('select');
@@ -935,7 +930,7 @@ TEMPLATE = '''
             if (!appStartTime) {
                 // Check localStorage for a previously stored start time
                 const storedStartTime = localStorage.getItem('appStartTime');
-                if (storedStartTime) {
+                if (storedStartTime && {{ g_connected | tojson }}) {
                     appStartTime = parseInt(storedStartTime, 10);
                 } else {
                     // If no stored time, this is the first load in this "session"
@@ -943,33 +938,17 @@ TEMPLATE = '''
                     localStorage.setItem('appStartTime', appStartTime.toString());
                 }
             }
-            const elapsedTime = Math.floor((Date.now() - appStartTime) / 1000);
+             const elapsedTime = ({{ g_connected | tojson }}) ? Math.floor((Date.now() - appStartTime) / 1000) : 0;
             if (timerElement) { // Ensure element exists
                 timerElement.textContent = 'App Usage: ' + formatTime(elapsedTime);
             }
         }
-
-        window.resetAppTimer = function() {
-            localStorage.removeItem('appStartTime');
-            appStartTime = null; // Clear the in-memory variable
-            updateTimer(); // Restart timer from 00:00:00
-            console.log("App timer has been reset.");
-        };
 
         document.addEventListener('DOMContentLoaded', () => {
             // Initialize or load start time and update timer
             // The logic for getting/setting appStartTime is now within updateTimer's first call
             updateTimer(); 
             setInterval(updateTimer, 1000); // Update timer every second
-
-            // Optional: Add a way to reset the timer, e.g., for testing
-            // You could call this from the console: resetAppTimer()
-            window.resetAppTimer = function() {
-                localStorage.removeItem('appStartTime');
-                appStartTime = null; // Clear the in-memory variable
-                updateTimer(); // Restart timer from 00:00:00
-                console.log("App timer has been reset.");
-            };
         });
 
     </script>
@@ -1577,8 +1556,8 @@ def disconnect():
 
                 cleanup_camera()
                 g_connected = False
-                session.pop('appStartTime', None)
-                print("[DISCONNECT DEBUG] Camera successfully disconnected and timer reset.")
+                print("[DISCONNECT DEBUG] Camera successfully disconnected.")
+                return redirect(url_for('reset_timer'))
             except Exception as e:
                 warning = f'Error disconnecting camera: {e}'
                 print(f"[DISCONNECT ERROR] {e}")
@@ -1659,6 +1638,11 @@ def get_image(filename):
 def status_api():
     """API endpoint to get system status."""
     return jsonify(get_status())
+
+@app.route('/reset_timer')
+def reset_timer():
+    session.pop('appStartTime', None)
+    return redirect(url_for('index'))
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5001, debug=True, threaded=True) 
