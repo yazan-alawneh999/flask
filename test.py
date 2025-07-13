@@ -859,6 +859,11 @@ TEMPLATE = '''
         {% endif %}
     </div>
     <script>
+        {% if not g_connected %}
+        if (typeof window.resetAppTimer === 'function') {
+            window.resetAppTimer();
+        }
+        {% endif %}
         const settingsForm = document.getElementById('settings-form');
         if (settingsForm) {
             const selectElements = settingsForm.querySelectorAll('select');
@@ -943,6 +948,13 @@ TEMPLATE = '''
                 timerElement.textContent = 'App Usage: ' + formatTime(elapsedTime);
             }
         }
+
+        window.resetAppTimer = function() {
+            localStorage.removeItem('appStartTime');
+            appStartTime = null; // Clear the in-memory variable
+            updateTimer(); // Restart timer from 00:00:00
+            console.log("App timer has been reset.");
+        };
 
         document.addEventListener('DOMContentLoaded', () => {
             // Initialize or load start time and update timer
@@ -1565,7 +1577,8 @@ def disconnect():
 
                 cleanup_camera()
                 g_connected = False
-                print("[DISCONNECT DEBUG] Camera successfully disconnected.")
+                session.pop('appStartTime', None)
+                print("[DISCONNECT DEBUG] Camera successfully disconnected and timer reset.")
             except Exception as e:
                 warning = f'Error disconnecting camera: {e}'
                 print(f"[DISCONNECT ERROR] {e}")
