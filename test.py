@@ -63,7 +63,7 @@ g_monitoring = False  # Monitoring mode flag
 DEFAULT_SETTINGS = {
     'resolution': [1920, 1080],  # Moderate HD resolution
     'compression': 'Medium',      # Balanced quality and size/speed
-    'fps': '30',                 # Standard video FPS
+    'fps': '60',                 # Standard video FPS
     'image': 'Color',
     'rotation': '0',
     'effect': 'Normal',
@@ -80,7 +80,7 @@ TEMPLATE = '''
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>StarckCam - Raspberry Pi Camera Control</title>
+    <title>StarckCam</title>
     <style>
         * {
             margin: 0;
@@ -626,7 +626,6 @@ TEMPLATE = '''
             <div class="header-content">
                 <div class="title-section">
                     <h1 class="main-title">StarckCam</h1>
-                    <p class="subtitle">Raspberry Pi Camera Control</p>
                     <p class="subtitle" id="app-timer" style="margin-top: 0.25rem;">App Usage: 00:00:00</p> <!-- Timer Display -->
                 </div>
                
@@ -1481,7 +1480,7 @@ def start_record():
     warning = None
     if width > 1920 or height > 1080:
         width, height = 1920, 1080
-        warning = 'Video resolution too high for PiCamera. Using 1920x1080 for recording.'
+        warning = 'Video resolution too high. Using 1920x1080 for recording.'
     cam = get_camera()
     with g_recording_lock:
         if getattr(cam, 'recording', False):
